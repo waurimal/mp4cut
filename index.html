@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
 
-    <!-- [핵심] 꼬여버린 서비스 워커 캐시를 강제로 청소하는 안전한 스크립트 -->
+    <!-- 꼬여버린 서비스 워커 캐시를 안전하게 청소하는 스크립트 -->
     <script>
         window.addEventListener('load', () => {
             try {
@@ -27,9 +27,9 @@
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 JSDelivr CDN) -->
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 unpkg CDN으로 통일) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -128,7 +128,7 @@
 
         // FFmpeg 객체 초기화
         const { FFmpeg } = window.FFmpegWASM;
-        const { fetchFile } = window.FFmpegUtil;
+        const { fetchFile, toBlobURL } = window.FFmpegUtil;
         const ffmpeg = new FFmpeg();
 
         // 내부 작업 상황을 브라우저 콘솔(F12)에 출력
@@ -325,35 +325,32 @@
                 if (!ffmpeg.loaded) {
                     showMessage('info', `
                         <div class="font-bold text-base mb-1 text-blue-800">엔진 초기화 중...</div>
-                        <div class="text-sm text-blue-700 font-medium">동영상 처리 모듈을 준비하고 있습니다. (최초 1회 한정)</div>
+                        <div class="text-sm text-blue-700 font-medium">동영상 처리 모듈을 가져오고 있습니다. (최초 1회 한정)</div>
                         <div class="text-xs text-gray-500 leading-relaxed mt-2">
-                            ※ 네트워크 환경에 따라 약 10~30초 가량 소요될 수 있습니다.
+                            ※ 네트워크 환경에 따라 약 10~20초 가량 소요될 수 있습니다.
                         </div>
                     `);
 
                     try {
-                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+                        const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                        const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
                         
-                        // [핵심 문제 완벽 해결]
-                        // 복잡한 fetch 우회 로직을 전부 제거하고, 공식 API 규칙에 따라 순수 자바스크립트 기술인
-                        // 'Blob 내장 워커(importScripts)' 기법을 사용해 보안 차단을 우회합니다.
-                        const workerCode = `importScripts('${ffmpegURL}/814.ffmpeg.js');`;
-                        const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
-                        const workerURL = URL.createObjectURL(workerBlob);
+                        // [메모리 초과 에러(undefined) 완벽 해결]
+                        // 무거운 코어 파일(30MB)은 브라우저가 직접 받도록 기본 URL을 넘기고,
+                        // Cross-Origin(CORS) 에러를 뱉는 아주 작은 '워커' 파일만 Blob으로 우회시켜 로드합니다.
+                        const workerBlobURL = await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
 
                         await ffmpeg.load({
                             coreURL: `${coreURL}/ffmpeg-core.js`,
                             wasmURL: `${coreURL}/ffmpeg-core.wasm`,
-                            classWorkerURL: workerURL
+                            classWorkerURL: workerBlobURL
                         });
-                        
-                        // 로딩 성공 후 메모리 정리
-                        URL.revokeObjectURL(workerURL);
                         
                     } catch (loadErr) {
                         console.error("FFmpeg 로드 상세 에러:", loadErr);
-                        throw new Error("필수 파일을 가져오는 데 실패했습니다. 일시적인 네트워크 문제일 수 있으니 새로고침 후 다시 시도해주세요.");
+                        // 에러 객체가 비어있거나 undefined일 경우를 대비해 명확한 텍스트로 치환합니다.
+                        const detail = loadErr?.message || (typeof loadErr === 'string' ? loadErr : "네트워크 차단 또는 메모리 부족");
+                        throw new Error(`필수 모듈 로딩 실패: ${detail}`);
                     }
                 }
 
