@@ -50,7 +50,7 @@
             <i data-lucide="scissors" class="w-8 h-8"></i>
             <div>
                 <h1 class="text-2xl font-bold">웹 기반 MP4 자르기</h1>
-                <p class="text-blue-100 text-sm mt-1">서버 업로드 없이 브라우저에서 안전하고 빠르게 동영상을 자릅니다.</p>
+                <p class="text-blue-100 text-sm mt-1">서버 업로드 없이 브라우저에서 여러 구간을 한 번에 빠르게 자릅니다.</p>
             </div>
         </div>
 
@@ -59,7 +59,6 @@
             <div class="mb-8">
                 <label class="block text-sm font-medium text-gray-700 mb-2">동영상 파일 선택 (MP4)</label>
                 <div class="flex items-center justify-center w-full">
-                    <!-- label로 복구하여 클릭 시 무한루프 충돌 방지 및 드래그 정상 인식 -->
                     <label id="drop-zone" for="file-input" class="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition relative">
                         <div class="flex flex-col items-center justify-center pt-5 pb-6 pointer-events-none">
                             <i data-lucide="upload-cloud" class="w-10 h-10 text-gray-400 mb-3"></i>
@@ -77,31 +76,18 @@
                 <video id="video-preview" controls class="w-full rounded-xl bg-black shadow-inner aspect-video"></video>
             </div>
 
-            <!-- 3. 시간 설정 -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                <!-- 시작 시간 -->
-                <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                    <label class="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-                        <i data-lucide="play-circle" class="w-4 h-4 text-green-600"></i> 시작 시간
-                    </label>
-                    <div class="flex items-center gap-2">
-                        <input type="text" id="start-time" value="00:00:00.000" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-center" placeholder="HH:MM:SS.mmm">
-                        <button id="set-start-btn" class="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition flex items-center gap-1">
-                            <i data-lucide="crosshair" class="w-4 h-4"></i> 현재 위치
-                        </button>
-                    </div>
+            <!-- 3. 시간 설정 (다중 구간 지원) -->
+            <div class="mb-8">
+                <div class="flex justify-between items-end mb-4 border-b border-gray-200 pb-2">
+                    <label class="block text-sm font-bold text-gray-700">자를 구간 설정</label>
+                    <button id="add-segment-btn" class="text-sm px-4 py-2 bg-blue-100 text-blue-700 font-bold rounded-lg hover:bg-blue-200 transition flex items-center gap-1 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                        <i data-lucide="plus" class="w-4 h-4"></i> 구간 추가
+                    </button>
                 </div>
-
-                <!-- 종료 시간 -->
-                <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                    <label class="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-                        <i data-lucide="stop-circle" class="w-4 h-4 text-red-600"></i> 종료 시간
-                    </label>
-                    <div class="flex items-center gap-2">
-                        <input type="text" id="end-time" value="00:00:00.000" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-center" placeholder="HH:MM:SS.mmm">
-                        <button id="set-end-btn" class="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition flex items-center gap-1">
-                            <i data-lucide="crosshair" class="w-4 h-4"></i> 현재 위치
-                        </button>
+                
+                <div id="segments-container" class="space-y-3">
+                    <div class="text-center p-6 bg-gray-50 rounded-xl border border-gray-200 text-gray-400 text-sm">
+                        먼저 동영상 파일을 선택해주세요.
                     </div>
                 </div>
             </div>
@@ -119,14 +105,21 @@
             </button>
 
             <!-- 다운로드 영역 -->
-            <div id="download-container" class="mt-6 hidden flex flex-col items-center justify-center p-6 bg-green-50 border border-green-200 rounded-xl">
+            <div id="download-container" class="mt-6 hidden flex-col items-center justify-center p-6 bg-green-50 border border-green-200 rounded-xl w-full">
                 <p class="text-green-800 font-bold mb-4 flex items-center gap-2">
-                    <i data-lucide="check-circle-2" class="w-5 h-5"></i> 처리가 완료되었습니다!
+                    <i data-lucide="check-circle-2" class="w-6 h-6"></i> 처리가 완료되었습니다!
                 </p>
-                <a id="download-link" href="#" class="px-8 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-md transition flex items-center gap-2">
-                    <i data-lucide="download" class="w-5 h-5"></i>
-                    잘린 동영상 다운로드
-                </a>
+                
+                <!-- 개별 파일 목록 -->
+                <div id="download-list" class="flex flex-col gap-2 w-full max-w-lg mb-6">
+                    <!-- 자바스크립트로 추가됨 -->
+                </div>
+
+                <!-- 모두 다운로드 버튼 -->
+                <button id="download-all-btn" class="px-8 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-md transition flex items-center gap-2">
+                    <i data-lucide="download-cloud" class="w-5 h-5"></i>
+                    모두 다운로드
+                </button>
             </div>
         </div>
     </div>
@@ -142,6 +135,26 @@
         // 아이콘 초기화
         lucide.createIcons();
 
+        // =========================================================================
+        // [중요] 브라우저 CORS 보안 정책 우회 패치 (Monkey Patching)
+        // =========================================================================
+        if (!window.Worker.isPatched) {
+            const OriginalWorker = window.Worker;
+            window.Worker = function(url, options) {
+                try {
+                    const urlString = url instanceof URL ? url.href : url.toString();
+                    if (urlString.startsWith('http') && !urlString.startsWith(window.location.origin)) {
+                        const blob = new Blob([`importScripts('${urlString}');`], { type: 'application/javascript' });
+                        return new OriginalWorker(URL.createObjectURL(blob), options);
+                    }
+                } catch (e) {
+                    console.warn('Worker 우회 패치 실패:', e);
+                }
+                return new OriginalWorker(url, options);
+            };
+            window.Worker.isPatched = true;
+        }
+
         // 최신 FFmpeg v0.12.x 객체 가져오기
         const { FFmpeg } = window.FFmpegWASM;
         const { fetchFile, toBlobURL } = window.FFmpegUtil;
@@ -153,16 +166,17 @@
         const fileNameDisplay = document.getElementById('file-name-display');
         const videoContainer = document.getElementById('video-container');
         const videoPreview = document.getElementById('video-preview');
-        const startTimeInput = document.getElementById('start-time');
-        const endTimeInput = document.getElementById('end-time');
-        const setStartBtn = document.getElementById('set-start-btn');
-        const setEndBtn = document.getElementById('set-end-btn');
         const trimBtn = document.getElementById('trim-btn');
         const messageBox = document.getElementById('message-box');
         const messageText = document.getElementById('message-text');
         const messageIcon = document.getElementById('message-icon');
         const downloadContainer = document.getElementById('download-container');
-        const downloadLink = document.getElementById('download-link');
+        const downloadList = document.getElementById('download-list');
+        const downloadAllBtn = document.getElementById('download-all-btn');
+        
+        // 다중 구간 관련 요소
+        const segmentsContainer = document.getElementById('segments-container');
+        const addSegmentBtn = document.getElementById('add-segment-btn');
 
         let selectedFile = null;
 
@@ -202,11 +216,69 @@
             messageIcon.classList.remove('animate-spin');
         }
 
+        // ================= 다중 구간 (Segments) 관리 로직 =================
+        function updateSegmentIndices() {
+            const items = segmentsContainer.querySelectorAll('.segment-item');
+            items.forEach((item, index) => {
+                item.querySelector('.segment-index').textContent = index + 1;
+                // 구간이 1개일 때는 삭제 버튼 숨기기
+                const removeBtn = item.querySelector('.remove-segment-btn');
+                if (items.length === 1) {
+                    removeBtn.style.display = 'none';
+                } else {
+                    removeBtn.style.display = 'block';
+                }
+            });
+        }
+
+        function addSegment(startVal = '00:00:00.000', endVal = '00:00:00.000') {
+            const div = document.createElement('div');
+            div.className = 'segment-item bg-white p-3 rounded-xl border border-gray-200 flex flex-col md:flex-row gap-3 items-center transition-all hover:shadow-md';
+            div.innerHTML = `
+                <div class="font-bold text-gray-500 w-full md:w-16 text-center md:text-left whitespace-nowrap">구간 <span class="segment-index"></span></div>
+                <div class="flex-1 flex flex-col sm:flex-row gap-3 w-full">
+                    <div class="flex-1 flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-200">
+                        <span class="text-xs text-blue-600 font-bold w-8 text-center bg-blue-100 rounded px-1 py-0.5">시작</span>
+                        <input type="text" class="start-time flex-1 bg-transparent text-sm font-mono focus:outline-none text-center" value="${startVal}">
+                        <button class="set-start-btn p-1.5 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 transition" title="재생 중인 화면의 시간을 입력합니다."><i data-lucide="crosshair" class="w-4 h-4"></i></button>
+                    </div>
+                    <div class="flex-1 flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-200">
+                        <span class="text-xs text-red-600 font-bold w-8 text-center bg-red-100 rounded px-1 py-0.5">종료</span>
+                        <input type="text" class="end-time flex-1 bg-transparent text-sm font-mono focus:outline-none text-center" value="${endVal}">
+                        <button class="set-end-btn p-1.5 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 transition" title="재생 중인 화면의 시간을 입력합니다."><i data-lucide="crosshair" class="w-4 h-4"></i></button>
+                    </div>
+                </div>
+                <button class="remove-segment-btn text-red-400 hover:bg-red-50 hover:text-red-600 p-2 rounded transition" title="이 구간 삭제"><i data-lucide="trash-2" class="w-5 h-5"></i></button>
+            `;
+
+            // 해당 구간의 현재 위치 버튼 이벤트 적용
+            div.querySelector('.set-start-btn').addEventListener('click', () => {
+                if (selectedFile) div.querySelector('.start-time').value = formatTime(videoPreview.currentTime);
+            });
+            div.querySelector('.set-end-btn').addEventListener('click', () => {
+                if (selectedFile) div.querySelector('.end-time').value = formatTime(videoPreview.currentTime);
+            });
+            div.querySelector('.remove-segment-btn').addEventListener('click', () => {
+                div.remove();
+                updateSegmentIndices();
+            });
+
+            segmentsContainer.appendChild(div);
+            lucide.createIcons({ root: div });
+            updateSegmentIndices();
+        }
+
+        addSegmentBtn.addEventListener('click', () => {
+            // 새 구간 추가 (기본값은 영상 전체 길이)
+            addSegment('00:00:00.000', formatTime(videoPreview.duration));
+        });
+
+        // ================================================================
+
         // 1. 파일 처리 메인 함수
         function handleFile(file) {
             if (!file) return;
             
-            // 동영상 파일인지 검증
             if (!file.type.startsWith('video/')) {
                 showMessage('error', '동영상 파일만 업로드할 수 있습니다.');
                 return;
@@ -218,29 +290,27 @@
             fileNameDisplay.textContent = `선택된 파일: ${selectedFile.name}`;
             fileNameDisplay.classList.remove('hidden');
             
-            // 기존 미리보기 URL 메모리 해제
             if (videoPreview.src) URL.revokeObjectURL(videoPreview.src);
 
-            // 새 미리보기 영상 설정
             const videoURL = URL.createObjectURL(selectedFile);
             videoPreview.src = videoURL;
             videoContainer.classList.remove('hidden');
             
-            // 메타데이터가 로드되면 종료 시간 설정
+            // 파일 로딩 시 초기화
             videoPreview.onloadedmetadata = () => {
-                startTimeInput.value = '00:00:00.000';
-                endTimeInput.value = formatTime(videoPreview.duration);
+                segmentsContainer.innerHTML = ''; // 안내 문구 제거
+                addSegment('00:00:00.000', formatTime(videoPreview.duration)); // 첫 번째 기본 구간 생성
+                addSegmentBtn.disabled = false; // 구간 추가 버튼 활성화
             };
 
             hideMessage();
             downloadContainer.classList.add('hidden');
+            downloadContainer.classList.remove('flex');
         }
 
         // ================= 드래그 앤 드롭 및 클릭 이벤트 =================
-        // 클릭으로 파일 선택 시 (브라우저 기본 label 태그 기능 활용)
         fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 
-        // 브라우저 화면 전체에 드롭했을 때 파일이 열려버리는 기본 동작 방지
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
             window.addEventListener(eventName, preventDefaults, false);
             dropZone.addEventListener(eventName, preventDefaults, false);
@@ -251,7 +321,6 @@
             e.stopPropagation();
         }
 
-        // 마우스가 영역 안으로 들어올 때 스타일 변경
         ['dragenter', 'dragover'].forEach(eventName => {
             dropZone.addEventListener(eventName, () => {
                 dropZone.classList.add('bg-blue-50', 'border-blue-500');
@@ -259,7 +328,6 @@
             }, false);
         });
 
-        // 마우스가 영역 밖으로 나갈 때 스타일 원상복구
         ['dragleave', 'drop'].forEach(eventName => {
             dropZone.addEventListener(eventName, () => {
                 dropZone.classList.remove('bg-blue-50', 'border-blue-500');
@@ -267,36 +335,45 @@
             }, false);
         });
 
-        // 파일을 떨어뜨렸을 때
         dropZone.addEventListener('drop', (e) => {
             const dt = e.dataTransfer;
             const files = dt.files;
             if (files && files.length > 0) {
-                fileInput.files = files; // input 요소에 파일 할당
+                fileInput.files = files;
                 handleFile(files[0]);
             }
         });
-        // ================================================================
 
-        // 2. 현재 위치 시간 버튼 이벤트
-        setStartBtn.addEventListener('click', () => {
-            if (selectedFile) startTimeInput.value = formatTime(videoPreview.currentTime);
+        // ================= 일괄 다운로드 버튼 이벤트 =================
+        downloadAllBtn.addEventListener('click', () => {
+            const links = downloadList.querySelectorAll('a');
+            links.forEach((link, index) => {
+                // 한 번에 다운로드하면 브라우저가 차단할 수 있으므로 약간의 시차(0.5초)를 둠
+                setTimeout(() => {
+                    link.click();
+                }, index * 500); 
+            });
         });
 
-        setEndBtn.addEventListener('click', () => {
-            if (selectedFile) endTimeInput.value = formatTime(videoPreview.currentTime);
-        });
-
-        // 3. 자르기 실행 이벤트
+        // ================= 3. 자르기 실행 이벤트 (다중 구간 적용) =================
         trimBtn.addEventListener('click', async () => {
+            const segments = segmentsContainer.querySelectorAll('.segment-item');
+            
             if (!selectedFile) {
                 showMessage('error', '먼저 자를 동영상 파일을 선택해주세요.');
+                return;
+            }
+            if (segments.length === 0) {
+                showMessage('error', '자를 구간이 설정되지 않았습니다.');
                 return;
             }
 
             try {
                 trimBtn.disabled = true;
+                addSegmentBtn.disabled = true;
                 downloadContainer.classList.add('hidden');
+                downloadContainer.classList.remove('flex');
+                downloadList.innerHTML = ''; // 다운로드 목록 초기화
                 
                 // FFmpeg 로드 (최초 1회만 실행됨)
                 if (!ffmpeg.loaded) {
@@ -305,7 +382,6 @@
                     const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
                     const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
 
-                    // [핵심] 외부 CDN Worker 직접 호출 차단을 막기 위해 모든 필요 코어 파일을 Blob으로 변환하여 로드
                     await ffmpeg.load({
                         coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
                         wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
@@ -316,39 +392,80 @@
                 showMessage('info', '파일을 가상 메모리에 복사하고 있습니다...');
                 await ffmpeg.writeFile('input.mp4', await fetchFile(selectedFile));
 
-                const start = startTimeInput.value;
-                const end = endTimeInput.value;
+                const originalName = selectedFile.name.replace(/\.[^/.]+$/, ""); // 확장자 제거
+                const ext = selectedFile.name.split('.').pop() || 'mp4'; // 확장자 추출
+                let successCount = 0;
 
-                showMessage('info', `동영상을 자르는 중입니다...<br><span class="text-xs text-blue-600 mt-1 block">구간: ${start} ~ ${end} (인코딩 없이 고속 처리 중)</span>`);
-                
-                // 자르기 명령어 실행
-                await ffmpeg.exec(['-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', 'output.mp4']);
+                // 각 구간별로 순차적으로 처리
+                for (let i = 0; i < segments.length; i++) {
+                    const start = segments[i].querySelector('.start-time').value;
+                    const end = segments[i].querySelector('.end-time').value;
+                    
+                    // 파일명 규칙 적용: 구간이 1개일 때는 '원본_잘림.mp4', 여러 개일 때는 '원본_01.mp4', '원본_02.mp4'
+                    const padIndex = String(i + 1).padStart(2, '0');
+                    const outName = `output_${i}.mp4`; // 가상 메모리 상의 임시 이름
+                    const finalName = segments.length === 1 ? `${originalName}_잘림.${ext}` : `${originalName}_${padIndex}.${ext}`;
 
-                showMessage('info', '처리가 완료되어 파일을 생성하고 있습니다...');
-                
-                // 결과 파일 읽기
-                const data = await ffmpeg.readFile('output.mp4');
+                    showMessage('info', `<div class="mb-1"><span class="font-bold text-blue-700">[구간 ${i+1}/${segments.length}]</span> 처리 중...</div><div class="text-xs text-gray-600">설정시간: ${start} ~ ${end} (인코딩 없이 고속 처리 중)</div>`);
+                    
+                    try {
+                        // 자르기 명령어 실행
+                        await ffmpeg.exec(['-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', outName]);
 
-                // Blob 및 다운로드 링크 생성
-                const blob = new Blob([data.buffer], { type: 'video/mp4' });
-                const url = URL.createObjectURL(blob);
+                        // 결과 파일 읽기
+                        const data = await ffmpeg.readFile(outName);
 
-                downloadLink.href = url;
-                downloadLink.download = `잘림_${selectedFile.name}`;
-                downloadContainer.classList.remove('hidden');
+                        // Blob 및 다운로드 링크 생성
+                        const blob = new Blob([data.buffer], { type: 'video/mp4' });
+                        const url = URL.createObjectURL(blob);
 
-                hideMessage();
+                        // 다운로드 목록 UI에 아이템 추가
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = finalName;
+                        a.className = 'flex items-center justify-between px-4 py-3 bg-white border border-gray-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition shadow-sm w-full cursor-pointer';
+                        a.innerHTML = `
+                            <span class="text-sm font-bold text-gray-700 truncate mr-4">${finalName}</span>
+                            <div class="flex items-center text-blue-600 text-sm font-medium gap-1 bg-white px-2 py-1 rounded border border-blue-200">
+                                다운로드 <i data-lucide="download" class="w-4 h-4"></i>
+                            </div>
+                        `;
+                        downloadList.appendChild(a);
+                        lucide.createIcons({ root: a }); // 새로 추가된 태그 안의 아이콘 렌더링
+                        successCount++;
 
-                // 가상 메모리 확보를 위해 임시 파일 삭제
+                        // 가상 메모리 확보를 위해 임시 파일 삭제
+                        await ffmpeg.deleteFile(outName);
+
+                    } catch(e) {
+                        console.error(`구간 ${i+1} 처리 실패:`, e);
+                    }
+                } // End of For loop
+
+                // 임시 원본 파일 삭제
                 try {
                     await ffmpeg.deleteFile('input.mp4');
-                    await ffmpeg.deleteFile('output.mp4');
                 } catch(e) {}
+
+                // 최종 처리 결과 안내
+                hideMessage();
+                if (successCount > 0) {
+                    downloadContainer.classList.remove('hidden');
+                    downloadContainer.classList.add('flex');
+                    
+                    // 파일이 2개 이상일 때만 '모두 다운로드' 버튼 표시
+                    if (successCount > 1) {
+                        downloadAllBtn.style.display = 'flex';
+                    } else {
+                        downloadAllBtn.style.display = 'none';
+                    }
+                } else {
+                    showMessage('error', '모든 구간 처리 중 오류가 발생했습니다.');
+                }
 
             } catch (error) {
                 console.error("FFmpeg 작업 중 상세 오류:", error);
                 
-                // 에러 객체에 따라 정확한 내용을 분석해서 출력
                 let errorMsg = "알 수 없는 오류";
                 if (error instanceof Error) {
                     errorMsg = error.message;
@@ -359,12 +476,13 @@
                 }
                 
                 if (errorMsg === '{}' || errorMsg === 'undefined' || !errorMsg) {
-                    errorMsg = "초기화에 실패했습니다. (F12를 눌러 개발자 도구의 콘솔 창을 확인해주세요.)";
+                    errorMsg = "초기화에 실패했습니다. (새로고침 후 다시 시도해주세요.)";
                 }
                 
                 showMessage('error', `작업 중 오류가 발생했습니다: ${errorMsg}`);
             } finally {
                 trimBtn.disabled = false;
+                addSegmentBtn.disabled = false;
                 if(messageIcon) messageIcon.classList.remove('animate-spin');
             }
         });
