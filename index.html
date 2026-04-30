@@ -5,14 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
 
-    <!-- 이전 버전의 불필요한 캐시(Service Worker) 청소 스크립트 -->
+    <!-- [핵심] 꼬여버린 서비스 워커 캐시를 강제 삭제하는 스크립트 -->
     <script>
         window.addEventListener('load', () => {
             try {
                 if ('serviceWorker' in navigator) {
                     navigator.serviceWorker.getRegistrations().then(function(registrations) {
                         for(let registration of registrations) {
-                            registration.unregister().catch(e => console.warn(e));
+                            registration.unregister().then(() => {
+                                console.log('과거 캐시 워커 삭제 완료');
+                            }).catch(e => console.warn(e));
                         }
                     }).catch(e => console.warn(e));
                 }
@@ -20,14 +22,34 @@
         });
     </script>
 
+    <!-- [핵심] 웹 워커(Web Worker) Cross-Origin 제한 우회 패치 -->
+    <script>
+        if (!window.Worker.isPatched) {
+            const OriginalWorker = window.Worker;
+            window.Worker = function(url, options) {
+                try {
+                    const urlString = url instanceof URL ? url.href : url.toString();
+                    if (urlString.startsWith('http') && !urlString.startsWith(window.location.origin)) {
+                        const blob = new Blob([`importScripts('${urlString}');`], { type: 'application/javascript' });
+                        return new OriginalWorker(URL.createObjectURL(blob), options);
+                    }
+                } catch (e) {
+                    console.warn('Worker 우회 패치 실패:', e);
+                }
+                return new OriginalWorker(url, options);
+            };
+            window.Worker.isPatched = true;
+        }
+    </script>
+
     <!-- Tailwind CSS (스타일링) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 JSDelivr CDN) -->
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 unpkg CDN) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -129,10 +151,6 @@
         const { fetchFile } = window.FFmpegUtil;
         const ffmpeg = new FFmpeg();
 
-        ffmpeg.on('log', ({ message }) => {
-            console.log('[FFmpeg]', message);
-        });
-
         // DOM 요소 연결
         const dropZone = document.getElementById('drop-zone');
         const fileInput = document.getElementById('file-input');
@@ -185,18 +203,21 @@
             messageIcon.classList.remove('animate-spin');
         }
 
-        // ================= 안전한 파일 다운로드 및 Blob 변환 로직 =================
-        // 에러를 명확히 잡기 위해 커스텀 함수 구현
+        // ================= 캐시 우회(Cache-Busting) 적용 다운로드 함수 =================
         async function safeFetchBlobURL(url, mimeType) {
             try {
-                const response = await fetch(url);
-                if (!response.ok) throw new Error(`HTTP ${response.status} 에러`);
+                // 브라우저의 악성 캐시를 완벽히 피하기 위해 난수(timestamp)를 쿼리에 추가
+                const cacheBusterUrl = url + '?v=' + new Date().getTime();
+                const response = await fetch(cacheBusterUrl, { cache: 'no-store' });
+                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
                 const buffer = await response.arrayBuffer();
                 const blob = new Blob([buffer], { type: mimeType });
                 return URL.createObjectURL(blob);
             } catch (err) {
                 console.error(`다운로드 실패 (${url}):`, err);
-                throw new Error(`${url.split('/').pop()} 파일을 가져오지 못했습니다. (${err.message})`);
+                throw new Error(`${url.split('/').pop()} 다운로드 실패`);
             }
         }
 
@@ -337,43 +358,20 @@
                 if (!ffmpeg.loaded) {
                     showMessage('info', `
                         <div class="font-bold text-base mb-1 text-blue-800">엔진 초기화 중...</div>
-                        <div class="text-sm text-blue-700 font-medium flex justify-between">
-                            <span>필수 파일 다운로드 중 (약 30MB)</span>
-                            <span id="simulated-progress-text">0%</span>
-                        </div>
-                        <div class="w-full bg-blue-200 rounded-full h-2.5 mt-2 mb-3 overflow-hidden">
-                            <div id="simulated-progress-bar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%; transition: width 0.5s;"></div>
-                        </div>
-                        <div class="text-xs text-gray-500 leading-relaxed">
-                            ※ 네트워크 환경에 따라 10~30초가 소요될 수 있습니다.<br>
-                            ※ <b>최초 1회만 다운로드</b>하며, 완료 후 즉시 자르기가 시작됩니다!
+                        <div class="text-sm text-blue-700 font-medium">필수 시스템 파일을 준비하고 있습니다. (약 30MB)</div>
+                        <div class="text-xs text-gray-500 leading-relaxed mt-2">
+                            ※ 처음 한 번만 다운로드하며, 네트워크 환경에 따라 약간의 시간이 소요될 수 있습니다.
                         </div>
                     `);
 
-                    // 시각적 가짜 진행률 바 (최대 90%까지 서서히 증가)
-                    let prog = 0;
-                    const progInt = setInterval(() => {
-                        prog += (90 - prog) * 0.05;
-                        const bar = document.getElementById('simulated-progress-bar');
-                        const txt = document.getElementById('simulated-progress-text');
-                        if (bar) bar.style.width = `${Math.round(prog)}%`;
-                        if (txt) txt.textContent = `${Math.round(prog)}%`;
-                    }, 500);
-
                     try {
-                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+                        const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                        const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
                         
-                        // 크로스오리진 워커 차단 문제를 완벽 해결하기 위해 파일들을 Blob으로 직접 다운로드 후 주입
+                        // [핵심] 다운로드 시 꼬여버린 서비스 워커 캐시를 완전히 무시
                         const coreBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript');
                         const wasmBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm');
                         const workerBlob = await safeFetchBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
-
-                        clearInterval(progInt);
-                        const bar = document.getElementById('simulated-progress-bar');
-                        if (bar) bar.style.width = `100%`;
-                        const txt = document.getElementById('simulated-progress-text');
-                        if (txt) txt.textContent = `100%`;
 
                         await ffmpeg.load({
                             coreURL: coreBlob,
@@ -382,8 +380,7 @@
                         });
 
                     } catch (loadErr) {
-                        clearInterval(progInt);
-                        throw loadErr;
+                        throw new Error(`엔진 초기화 실패! 이전 버전의 찌꺼기가 남아있을 수 있습니다. 강력 새로고침(Ctrl+Shift+R) 후 다시 시도해주세요. (${loadErr.message})`);
                     }
                 }
 
@@ -445,7 +442,7 @@
             } catch (error) {
                 console.error("작업 에러 발생:", error);
                 const errorMsg = error instanceof Error ? error.message : (error?.message || String(error));
-                showMessage('error', `작업 중 오류가 발생했습니다: ${errorMsg}`);
+                showMessage('error', `<div class="font-bold">작업 중 오류가 발생했습니다.</div><div class="text-xs mt-1 text-red-600">${errorMsg}</div>`);
             } finally {
                 trimBtn.disabled = false;
                 addSegmentBtn.disabled = false;
