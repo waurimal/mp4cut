@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
 
-    <!-- [핵심] 꼬여버린 서비스 워커 캐시를 강제 삭제하는 스크립트 -->
+    <!-- [핵심] 꼬여버린 서비스 워커 캐시를 강제로 청소하는 안전한 스크립트 -->
     <script>
         window.addEventListener('load', () => {
             try {
@@ -14,32 +14,12 @@
                         for(let registration of registrations) {
                             registration.unregister().then(() => {
                                 console.log('과거 캐시 워커 삭제 완료');
-                            }).catch(e => console.warn(e));
+                            }).catch(() => {});
                         }
-                    }).catch(e => console.warn(e));
+                    }).catch(() => {});
                 }
             } catch (e) {}
         });
-    </script>
-
-    <!-- [핵심] 웹 워커(Web Worker) Cross-Origin 제한 우회 패치 -->
-    <script>
-        if (!window.Worker.isPatched) {
-            const OriginalWorker = window.Worker;
-            window.Worker = function(url, options) {
-                try {
-                    const urlString = url instanceof URL ? url.href : url.toString();
-                    if (urlString.startsWith('http') && !urlString.startsWith(window.location.origin)) {
-                        const blob = new Blob([`importScripts('${urlString}');`], { type: 'application/javascript' });
-                        return new OriginalWorker(URL.createObjectURL(blob), options);
-                    }
-                } catch (e) {
-                    console.warn('Worker 우회 패치 실패:', e);
-                }
-                return new OriginalWorker(url, options);
-            };
-            window.Worker.isPatched = true;
-        }
     </script>
 
     <!-- Tailwind CSS (스타일링) -->
@@ -47,9 +27,9 @@
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 unpkg CDN) -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 JSDelivr CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -146,10 +126,15 @@
     <script>
         lucide.createIcons();
 
-        // FFmpeg 초기화
+        // FFmpeg 객체 초기화
         const { FFmpeg } = window.FFmpegWASM;
         const { fetchFile } = window.FFmpegUtil;
         const ffmpeg = new FFmpeg();
+
+        // 내부 작업 상황을 브라우저 콘솔(F12)에 출력
+        ffmpeg.on('log', ({ message }) => {
+            console.log('[FFmpeg Log]', message);
+        });
 
         // DOM 요소 연결
         const dropZone = document.getElementById('drop-zone');
@@ -201,24 +186,6 @@
             messageBox.classList.add('hidden');
             messageBox.classList.remove('flex');
             messageIcon.classList.remove('animate-spin');
-        }
-
-        // ================= 캐시 우회(Cache-Busting) 적용 다운로드 함수 =================
-        async function safeFetchBlobURL(url, mimeType) {
-            try {
-                // 브라우저의 악성 캐시를 완벽히 피하기 위해 난수(timestamp)를 쿼리에 추가
-                const cacheBusterUrl = url + '?v=' + new Date().getTime();
-                const response = await fetch(cacheBusterUrl, { cache: 'no-store' });
-                
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                
-                const buffer = await response.arrayBuffer();
-                const blob = new Blob([buffer], { type: mimeType });
-                return URL.createObjectURL(blob);
-            } catch (err) {
-                console.error(`다운로드 실패 (${url}):`, err);
-                throw new Error(`${url.split('/').pop()} 다운로드 실패`);
-            }
         }
 
         // ================= 다중 구간 (Segments) 관리 로직 =================
@@ -354,44 +321,52 @@
                 downloadContainer.classList.remove('flex');
                 downloadList.innerHTML = '';
                 
-                // 최초 1회 로드 진행
+                // 최초 1회 엔진 로드
                 if (!ffmpeg.loaded) {
                     showMessage('info', `
                         <div class="font-bold text-base mb-1 text-blue-800">엔진 초기화 중...</div>
-                        <div class="text-sm text-blue-700 font-medium">필수 시스템 파일을 준비하고 있습니다. (약 30MB)</div>
+                        <div class="text-sm text-blue-700 font-medium">동영상 처리 모듈을 준비하고 있습니다. (최초 1회 한정)</div>
                         <div class="text-xs text-gray-500 leading-relaxed mt-2">
-                            ※ 처음 한 번만 다운로드하며, 네트워크 환경에 따라 약간의 시간이 소요될 수 있습니다.
+                            ※ 네트워크 환경에 따라 약 10~30초 가량 소요될 수 있습니다.
                         </div>
                     `);
 
                     try {
-                        const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-                        const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
                         
-                        // [핵심] 다운로드 시 꼬여버린 서비스 워커 캐시를 완전히 무시
-                        const coreBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript');
-                        const wasmBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm');
-                        const workerBlob = await safeFetchBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
+                        // [핵심 문제 완벽 해결]
+                        // 복잡한 fetch 우회 로직을 전부 제거하고, 공식 API 규칙에 따라 순수 자바스크립트 기술인
+                        // 'Blob 내장 워커(importScripts)' 기법을 사용해 보안 차단을 우회합니다.
+                        const workerCode = `importScripts('${ffmpegURL}/814.ffmpeg.js');`;
+                        const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+                        const workerURL = URL.createObjectURL(workerBlob);
 
                         await ffmpeg.load({
-                            coreURL: coreBlob,
-                            wasmURL: wasmBlob,
-                            classWorkerURL: workerBlob
+                            coreURL: `${coreURL}/ffmpeg-core.js`,
+                            wasmURL: `${coreURL}/ffmpeg-core.wasm`,
+                            classWorkerURL: workerURL
                         });
-
+                        
+                        // 로딩 성공 후 메모리 정리
+                        URL.revokeObjectURL(workerURL);
+                        
                     } catch (loadErr) {
-                        throw new Error(`엔진 초기화 실패! 이전 버전의 찌꺼기가 남아있을 수 있습니다. 강력 새로고침(Ctrl+Shift+R) 후 다시 시도해주세요. (${loadErr.message})`);
+                        console.error("FFmpeg 로드 상세 에러:", loadErr);
+                        throw new Error("필수 파일을 가져오는 데 실패했습니다. 일시적인 네트워크 문제일 수 있으니 새로고침 후 다시 시도해주세요.");
                     }
                 }
 
                 showMessage('info', '파일을 메모리에 준비하고 있습니다...');
+                
+                // 원본 파일을 브라우저 가상 파일 시스템으로 복사
                 await ffmpeg.writeFile('input.mp4', await fetchFile(selectedFile));
 
                 const originalName = selectedFile.name.replace(/\.[^/.]+$/, "");
                 const ext = selectedFile.name.split('.').pop() || 'mp4';
                 let successCount = 0;
 
-                // 순차적 자르기
+                // 순차적 자르기 로직 진행
                 for (let i = 0; i < segments.length; i++) {
                     const start = segments[i].querySelector('.start-time').value;
                     const end = segments[i].querySelector('.end-time').value;
@@ -399,15 +374,17 @@
                     const outName = `output_${i}.mp4`;
                     const finalName = segments.length === 1 ? `${originalName}_잘림.${ext}` : `${originalName}_${padIndex}.${ext}`;
 
-                    showMessage('info', `<div class="mb-1"><span class="font-bold text-blue-700">[구간 ${i+1}/${segments.length}]</span> 처리 중...</div><div class="text-xs text-gray-600">설정시간: ${start} ~ ${end} (인코딩 없이 고속 처리 중)</div>`);
+                    showMessage('info', `<div class="mb-1"><span class="font-bold text-blue-700">[구간 ${i+1}/${segments.length}]</span> 처리 중...</div><div class="text-xs text-gray-600">설정시간: ${start} ~ ${end} (인코딩 없이 고속 복사 중)</div>`);
                     
                     try {
+                        // -c copy 를 통해 재인코딩 없이 즉시 자르기
                         await ffmpeg.exec(['-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', outName]);
-                        const data = await ffmpeg.readFile(outName);
                         
+                        const data = await ffmpeg.readFile(outName);
                         const blob = new Blob([data.buffer], { type: 'video/mp4' });
                         const url = URL.createObjectURL(blob);
 
+                        // 성공한 파일을 목록에 표시
                         const a = document.createElement('a');
                         a.href = url;
                         a.download = finalName;
@@ -436,7 +413,7 @@
                     downloadContainer.classList.add('flex');
                     downloadAllBtn.style.display = successCount > 1 ? 'flex' : 'none';
                 } else {
-                    showMessage('error', '모든 구간 처리 중 오류가 발생했습니다.');
+                    showMessage('error', '모든 구간을 처리하는 도중 오류가 발생했습니다.');
                 }
 
             } catch (error) {
