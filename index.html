@@ -25,9 +25,9 @@
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm v0.12.x (가장 호환성이 좋은 최신 버전으로 복귀) -->
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- ✅ FFmpeg.wasm 버전을 모두 0.12.6으로 정확하게 일치시킵니다. -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -126,7 +126,7 @@
 
         // FFmpeg 객체 초기화
         const { FFmpeg } = window.FFmpegWASM;
-        const { fetchFile, toBlobURL } = window.FFmpegUtil;
+        const { fetchFile } = window.FFmpegUtil;
         const ffmpeg = new FFmpeg();
 
         // 내부 작업 상황을 브라우저 콘솔(F12)에 출력
@@ -184,6 +184,23 @@
             messageBox.classList.add('hidden');
             messageBox.classList.remove('flex');
             messageIcon.classList.remove('animate-spin');
+        }
+
+        // ================= 안전한 모듈 다운로드 함수 (404 에러 방지) =================
+        async function safeFetchBlobURL(url, mimeType) {
+            try {
+                const response = await fetch(url);
+                // 파일이 없을 경우(404) 확실하게 에러를 던져서 쓰레기 데이터 생성을 막습니다.
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status} 에러 - 파일을 찾을 수 없습니다.`);
+                }
+                const buffer = await response.arrayBuffer();
+                const blob = new Blob([buffer], { type: mimeType });
+                return URL.createObjectURL(blob);
+            } catch (err) {
+                console.error(`다운로드 실패 (${url}):`, err);
+                throw new Error(`'${url.split('/').pop()}' 모듈 로드 실패 (${err.message})`);
+            }
         }
 
         // ================= 다중 구간 (Segments) 관리 로직 =================
@@ -319,7 +336,7 @@
                 downloadContainer.classList.remove('flex');
                 downloadList.innerHTML = '';
                 
-                // 최초 1회 엔진 로드 (가장 완벽한 정답 코드)
+                // 최초 1회 엔진 로드
                 if (!ffmpeg.loaded) {
                     showMessage('info', `
                         <div class="font-bold text-base mb-1 text-blue-800">엔진 초기화 중...</div>
@@ -336,10 +353,9 @@
                         </div>
                     `);
 
-                    // 사용자가 멈췄다고 오해하지 않도록 시각적 진행률 바 작동
                     let prog = 0;
                     const progInt = setInterval(() => {
-                        prog += (90 - prog) * 0.05; // 90%까지 서서히 증가
+                        prog += (90 - prog) * 0.05;
                         const bar = document.getElementById('simulated-progress-bar');
                         const txt = document.getElementById('simulated-progress-text');
                         if (bar) bar.style.width = `${Math.round(prog)}%`;
@@ -347,15 +363,14 @@
                     }, 500);
 
                     try {
-                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+                        // [핵심 해결] 모든 버전을 0.12.6으로 통일하여 워커 이름(814.ffmpeg.js) 불일치로 인한 404 에러를 방지합니다.
+                        const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                        const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd';
                         
-                        // [핵심] 3가지 필수 파일을 모두 메모리(Blob)로 강제 다운로드하여 브라우저의 Cross-Origin 제한을 무력화합니다.
-                        const coreBlob = await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript');
-                        const wasmBlob = await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm');
-                        const workerBlob = await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
+                        const coreBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript');
+                        const wasmBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm');
+                        const workerBlob = await safeFetchBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
 
-                        // 다운로드 완료 시 게이지 100% 채움
                         clearInterval(progInt);
                         const bar = document.getElementById('simulated-progress-bar');
                         const txt = document.getElementById('simulated-progress-text');
@@ -371,25 +386,22 @@
                     } catch (loadErr) {
                         clearInterval(progInt);
                         console.error("FFmpeg 로드 에러:", loadErr);
-                        throw new Error("모듈 다운로드에 실패했습니다. (인터넷 연결이나 광고 차단기, 회사 방화벽 등을 확인해주세요.)");
+                        throw new Error(loadErr.message);
                     }
                 }
 
-                // 용량이 클 경우 경고 안내 (실행은 계속 진행)
                 if (selectedFile.size > 500 * 1024 * 1024) {
                     console.warn("파일 크기가 500MB를 초과하여 브라우저 메모리에 부담을 줄 수 있습니다.");
                 }
 
                 showMessage('info', '파일을 메모리에 준비하고 있습니다...');
                 
-                // 원본 파일을 브라우저 가상 파일 시스템으로 복사
                 await ffmpeg.writeFile('input.mp4', await fetchFile(selectedFile));
 
                 const originalName = selectedFile.name.replace(/\.[^/.]+$/, "");
                 const ext = selectedFile.name.split('.').pop() || 'mp4';
                 let successCount = 0;
 
-                // 순차적 자르기 로직 진행
                 for (let i = 0; i < segments.length; i++) {
                     const start = segments[i].querySelector('.start-time').value;
                     const end = segments[i].querySelector('.end-time').value;
@@ -400,14 +412,12 @@
                     showMessage('info', `<div class="mb-1"><span class="font-bold text-blue-700">[구간 ${i+1}/${segments.length}]</span> 처리 중...</div><div class="text-xs text-gray-600">설정시간: ${start} ~ ${end} (인코딩 없이 고속 복사 중)</div>`);
                     
                     try {
-                        // -c copy 를 통해 재인코딩 없이 즉시 자르기
                         await ffmpeg.exec(['-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', outName]);
                         
                         const data = await ffmpeg.readFile(outName);
                         const blob = new Blob([data.buffer], { type: 'video/mp4' });
                         const url = URL.createObjectURL(blob);
 
-                        // 성공한 파일을 목록에 표시
                         const a = document.createElement('a');
                         a.href = url;
                         a.download = finalName;
