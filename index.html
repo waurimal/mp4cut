@@ -5,19 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
 
-    <!-- 기존에 설치된 coi-serviceworker를 강제로 삭제하여 이전 버전 캐싱 문제를 해결하는 스크립트 -->
+    <!-- [핵심] 웹 워커(Web Worker) Cross-Origin 제한 우회 패치 -->
+    <!-- 반드시 FFmpeg 라이브러리 스크립트보다 먼저 실행되어야 완벽하게 작동합니다. -->
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                    for(let registration of registrations) {
-                        registration.unregister().then(function(success) {
-                            if(success) console.log('과거 서비스 워커가 성공적으로 삭제되었습니다.');
-                        });
-                    }
-                }).catch(function(error) {
-                    console.warn('서비스 워커 상태 확인 중 오류 발생 (무시 가능):', error);
-                });
+        const OriginalWorker = window.Worker;
+        window.Worker = function(url, options) {
+            try {
+                const urlString = url instanceof URL ? url.href : url.toString();
+                // 외부 도메인(unpkg 등 CDN)에서 워커를 불러올 때 브라우저가 차단하는 것을 우회합니다.
+                if (urlString.startsWith('http') && !urlString.startsWith(window.location.origin)) {
+                    const isModule = options && options.type === 'module';
+                    const blobContent = isModule ? `import '${urlString}';` : `importScripts('${urlString}');`;
+                    const blob = new Blob([blobContent], { type: 'application/javascript' });
+                    return new OriginalWorker(URL.createObjectURL(blob), options);
+                }
+            } catch (e) {
+                console.warn('Worker 우회 패치 실패 (기본값으로 진행):', e);
+            }
+            return new OriginalWorker(url, options);
+        };
+    </script>
+
+    <!-- 이전 버전의 불필요한 캐시(Service Worker) 청소 스크립트 -->
+    <script>
+        window.addEventListener('load', () => {
+            try {
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                        for(let registration of registrations) {
+                            registration.unregister().catch(function(err) {
+                                console.warn('개별 서비스 워커 삭제 실패 (무시 가능):', err);
+                            });
+                        }
+                    }).catch(function(error) {
+                        // iframe 등 제한된 환경에서 발생하는 InvalidStateError 방지
+                        console.warn('서비스 워커 상태 확인 중 오류 발생 (무시 가능):', error);
+                    });
+                }
+            } catch (e) {
+                console.warn('서비스 워커 캐시 정리 중 동기식 에러 (무시 가능):', e);
             }
         });
     </script>
@@ -134,26 +160,6 @@
     <script>
         // 아이콘 초기화
         lucide.createIcons();
-
-        // =========================================================================
-        // [중요] 브라우저 CORS 보안 정책 우회 패치 (Monkey Patching)
-        // =========================================================================
-        if (!window.Worker.isPatched) {
-            const OriginalWorker = window.Worker;
-            window.Worker = function(url, options) {
-                try {
-                    const urlString = url instanceof URL ? url.href : url.toString();
-                    if (urlString.startsWith('http') && !urlString.startsWith(window.location.origin)) {
-                        const blob = new Blob([`importScripts('${urlString}');`], { type: 'application/javascript' });
-                        return new OriginalWorker(URL.createObjectURL(blob), options);
-                    }
-                } catch (e) {
-                    console.warn('Worker 우회 패치 실패:', e);
-                }
-                return new OriginalWorker(url, options);
-            };
-            window.Worker.isPatched = true;
-        }
 
         // 최신 FFmpeg v0.12.x 객체 가져오기
         const { FFmpeg } = window.FFmpegWASM;
@@ -377,15 +383,15 @@
                 
                 // FFmpeg 로드 (최초 1회만 실행됨)
                 if (!ffmpeg.loaded) {
-                    showMessage('info', '초기화 중입니다. (브라우저 정책 우회를 위해 라이브러리를 안전하게 가져오는 중입니다...)');
+                    showMessage('info', '초기화 중입니다. (라이브러리를 다운로드하는 중입니다. 10~20초 소요될 수 있습니다...)');
                     
                     const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-                    const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-
+                    
+                    // [핵심 해결] 문제가 되던 classWorkerURL을 제거하여 브라우저가 자동으로 올바른 워커를 찾게 만들고
+                    // 최상단에 있는 Monkey Patch가 그 과정을 낚아채서 안전하게(Blob) 우회 실행시킵니다.
                     await ffmpeg.load({
                         coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
-                        wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
-                        classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript')
+                        wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm')
                     });
                 }
 
@@ -403,7 +409,7 @@
                     
                     // 파일명 규칙 적용: 구간이 1개일 때는 '원본_잘림.mp4', 여러 개일 때는 '원본_01.mp4', '원본_02.mp4'
                     const padIndex = String(i + 1).padStart(2, '0');
-                    const outName = `output_${i}.mp4`; // 가상 메모리 상의 임시 이름
+                    const outName = `output_${i}.mp4`; // 가상 메모 상의 임시 이름
                     const finalName = segments.length === 1 ? `${originalName}_잘림.${ext}` : `${originalName}_${padIndex}.${ext}`;
 
                     showMessage('info', `<div class="mb-1"><span class="font-bold text-blue-700">[구간 ${i+1}/${segments.length}]</span> 처리 중...</div><div class="text-xs text-gray-600">설정시간: ${start} ~ ${end} (인코딩 없이 고속 처리 중)</div>`);
