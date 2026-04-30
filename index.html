@@ -12,9 +12,7 @@
                 if ('serviceWorker' in navigator) {
                     navigator.serviceWorker.getRegistrations().then(function(registrations) {
                         for(let registration of registrations) {
-                            registration.unregister().then(() => {
-                                console.log('과거 캐시 워커 삭제 완료');
-                            }).catch(() => {});
+                            registration.unregister().catch(() => {});
                         }
                     }).catch(() => {});
                 }
@@ -27,9 +25,8 @@
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm v0.12.x (공식 가이드라인의 unpkg CDN 적용) -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- ✅ FFmpeg.wasm v0.11.6 (가장 안정적인 버전으로 복귀) -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -126,15 +123,15 @@
     <script>
         lucide.createIcons();
 
-        // FFmpeg 객체 초기화
-        const { FFmpeg } = window.FFmpegWASM;
-        const { fetchFile, toBlobURL } = window.FFmpegUtil;
-        const ffmpeg = new FFmpeg();
-
-        // 내부 작업 상황을 브라우저 콘솔(F12)에 출력
-        ffmpeg.on('log', ({ message }) => {
-            console.log('[FFmpeg Log]', message);
+        // ================= [해결의 핵심] =================
+        // 브라우저 보안 및 메모리 에러를 피하기 위해, 다중 스레드(Worker)를 쓰지 않는
+        // 가벼운 단일 스레드(core-st) 특수 버전을 명시적으로 사용합니다.
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = createFFmpeg({
+            log: true,
+            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js'
         });
+        // =================================================
 
         // DOM 요소 연결
         const dropZone = document.getElementById('drop-zone');
@@ -321,47 +318,27 @@
                 downloadContainer.classList.remove('flex');
                 downloadList.innerHTML = '';
                 
-                // 최초 1회 엔진 로드
-                if (!ffmpeg.loaded) {
+                // 엔진 로드 (가벼운 단일 스레드 버전이라 빠릅니다)
+                if (!ffmpeg.isLoaded()) {
                     showMessage('info', `
                         <div class="font-bold text-base mb-1 text-blue-800">엔진 초기화 중...</div>
-                        <div class="text-sm text-blue-700 font-medium">동영상 처리 모듈을 가져오고 있습니다. (최초 1회 한정)</div>
+                        <div class="text-sm text-blue-700 font-medium">단일 스레드 전용 모듈을 로드합니다. (최초 1회 한정)</div>
                         <div class="text-xs text-gray-500 leading-relaxed mt-2">
-                            ※ 네트워크 환경에 따라 약 10~20초 가량 소요될 수 있습니다.
+                            ※ 약 15MB 용량으로 다운로드가 금방 완료됩니다.
                         </div>
                     `);
 
-                    // [에러 완벽 해결 원리]
-                    // Web Worker 스크립트(814.ffmpeg.js)는 외부 도메인(unpkg)에서 바로 불러오면 Cross-Origin(CORS) 오류로 막힙니다.
-                    // 따라서 이것 1개만 Blob으로 우회시켜 안전하게 로드합니다.
-                    // 반대로 core.js와 core.wasm은 우회(Blob)하면 내부 경로를 찾지 못해 failed to import 에러를 냅니다.
-                    // 따라서 코어 2개는 원래 CDN URL을 그대로 전달하여 충돌을 막습니다.
-                    const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-                    const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-                    
-                    let workerBlobURL;
                     try {
-                        workerBlobURL = await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
-                    } catch (e) {
-                        throw new Error("보안 우회 모듈을 다운로드하지 못했습니다. (네트워크나 애드블록 차단 확인 필요)");
-                    }
-
-                    try {
-                        await ffmpeg.load({
-                            coreURL: `${coreURL}/ffmpeg-core.js`,
-                            wasmURL: `${coreURL}/ffmpeg-core.wasm`,
-                            classWorkerURL: workerBlobURL
-                        });
-                        URL.revokeObjectURL(workerBlobURL); // 로딩 성공 후 메모리 정리
+                        await ffmpeg.load();
                     } catch (loadErr) {
-                        throw new Error(`모듈 초기화 실패: ${loadErr.message}`);
+                        throw new Error(`엔진 다운로드 실패: 인터넷 연결이나 확장프로그램(광고차단 등)을 확인해 주세요. (${loadErr.message})`);
                     }
                 }
 
                 showMessage('info', '파일을 메모리에 준비하고 있습니다...');
                 
-                // 원본 파일을 브라우저 가상 파일 시스템으로 복사
-                await ffmpeg.writeFile('input.mp4', await fetchFile(selectedFile));
+                // 구버전 API(v0.11) 문법으로 파일 쓰기
+                ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(selectedFile));
 
                 const originalName = selectedFile.name.replace(/\.[^/.]+$/, "");
                 const ext = selectedFile.name.split('.').pop() || 'mp4';
@@ -375,13 +352,13 @@
                     const outName = `output_${i}.mp4`;
                     const finalName = segments.length === 1 ? `${originalName}_잘림.${ext}` : `${originalName}_${padIndex}.${ext}`;
 
-                    showMessage('info', `<div class="mb-1"><span class="font-bold text-blue-700">[구간 ${i+1}/${segments.length}]</span> 처리 중...</div><div class="text-xs text-gray-600">설정시간: ${start} ~ ${end} (인코딩 없이 고속 복사 중)</div>`);
+                    showMessage('info', `<div class="mb-1"><span class="font-bold text-blue-700">[구간 ${i+1}/${segments.length}]</span> 처리 중...</div><div class="text-xs text-gray-600">설정시간: ${start} ~ ${end} (고속 복사 중)</div>`);
                     
                     try {
-                        // -c copy 를 통해 재인코딩 없이 즉시 자르기
-                        await ffmpeg.exec(['-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', outName]);
+                        // 자르기 명령어 실행 (v0.11 API)
+                        await ffmpeg.run('-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', outName);
                         
-                        const data = await ffmpeg.readFile(outName);
+                        const data = ffmpeg.FS('readFile', outName);
                         const blob = new Blob([data.buffer], { type: 'video/mp4' });
                         const url = URL.createObjectURL(blob);
 
@@ -400,13 +377,13 @@
                         lucide.createIcons({ root: a });
                         successCount++;
 
-                        await ffmpeg.deleteFile(outName);
+                        ffmpeg.FS('unlink', outName);
                     } catch(e) {
                         console.error(`구간 ${i+1} 처리 실패:`, e);
                     }
                 }
 
-                try { await ffmpeg.deleteFile('input.mp4'); } catch(e) {}
+                try { ffmpeg.FS('unlink', 'input.mp4'); } catch(e) {}
 
                 hideMessage();
                 if (successCount > 0) {
