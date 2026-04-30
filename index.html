@@ -7,15 +7,19 @@
 
     <!-- 기존에 설치된 coi-serviceworker를 강제로 삭제하여 이전 버전 캐싱 문제를 해결하는 스크립트 -->
     <script>
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                for(let registration of registrations) {
-                    registration.unregister().then(function(success) {
-                        if(success) console.log('과거 서비스 워커가 성공적으로 삭제되었습니다. 새로고침을 권장합니다.');
-                    });
-                }
-            });
-        }
+        document.addEventListener('DOMContentLoaded', () => {
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                    for(let registration of registrations) {
+                        registration.unregister().then(function(success) {
+                            if(success) console.log('과거 서비스 워커가 성공적으로 삭제되었습니다.');
+                        });
+                    }
+                }).catch(function(error) {
+                    console.warn('서비스 워커 상태 확인 중 오류 발생 (무시 가능):', error);
+                });
+            }
+        });
     </script>
 
     <!-- Tailwind CSS (스타일링) -->
@@ -23,7 +27,7 @@
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm v0.12.x (보안 에러를 유발하지 않는 최신 버전으로 교체!) -->
+    <!-- ✅ FFmpeg.wasm v0.12.x -->
     <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
     <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
@@ -138,9 +142,9 @@
         // 아이콘 초기화
         lucide.createIcons();
 
-        // 최신 FFmpeg v0.12.x 객체 가져오기
+        // 최신 FFmpeg v0.12.x 객체 가져오기 (Blob 우회를 위해 toBlobURL 추가)
         const { FFmpeg } = window.FFmpegWASM;
-        const { fetchFile } = window.FFmpegUtil;
+        const { fetchFile, toBlobURL } = window.FFmpegUtil;
         const ffmpeg = new FFmpeg();
 
         // DOM 요소
@@ -296,10 +300,16 @@
                 
                 // FFmpeg 로드 (최초 1회만 실행됨)
                 if (!ffmpeg.loaded) {
-                    showMessage('info', '초기화 중입니다. (최초 1회 코어 파일 로딩에 시간이 걸릴 수 있습니다...)');
+                    showMessage('info', '초기화 중입니다. (브라우저 정책 우회를 위해 코어 파일을 가져오는 중입니다...)');
+                    
+                    // Cross-Origin Worker 오류를 막기 위해 파일을 Blob으로 변환하여 로드합니다.
+                    const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                    const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+
                     await ffmpeg.load({
-                        coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
-                        wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
+                        coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
+                        wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                        classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript')
                     });
                 }
 
