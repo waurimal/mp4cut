@@ -25,19 +25,13 @@
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm v0.12.x -->
+    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 JSDelivr CDN) -->
     <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
-        /* 추가적인 커스텀 스타일 */
-        input[type="time"]::-webkit-calendar-picker-indicator {
-            cursor: pointer;
-        }
-        /* 드래그 앤 드롭 활성화 시 트랜지션 */
-        #drop-zone {
-            transition: all 0.2s ease;
-        }
+        input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
+        #drop-zone { transition: all 0.2s ease; }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen font-sans text-gray-800 antialiased p-4 md:p-8">
@@ -108,12 +102,10 @@
                     <i data-lucide="check-circle-2" class="w-6 h-6"></i> 처리가 완료되었습니다!
                 </p>
                 
-                <!-- 개별 파일 목록 -->
                 <div id="download-list" class="flex flex-col gap-2 w-full max-w-lg mb-6">
                     <!-- 자바스크립트로 추가됨 -->
                 </div>
 
-                <!-- 모두 다운로드 버튼 -->
                 <button id="download-all-btn" class="px-8 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-md transition flex items-center gap-2">
                     <i data-lucide="download-cloud" class="w-5 h-5"></i>
                     모두 다운로드
@@ -130,20 +122,18 @@
 
     <!-- JavaScript 로직 -->
     <script>
-        // 아이콘 초기화
         lucide.createIcons();
 
-        // 전역 객체 할당
+        // FFmpeg 초기화
         const { FFmpeg } = window.FFmpegWASM;
         const { fetchFile } = window.FFmpegUtil;
         const ffmpeg = new FFmpeg();
 
-        // 디버깅을 위한 내부 로그 출력
         ffmpeg.on('log', ({ message }) => {
             console.log('[FFmpeg]', message);
         });
 
-        // DOM 요소
+        // DOM 요소 연결
         const dropZone = document.getElementById('drop-zone');
         const fileInput = document.getElementById('file-input');
         const fileNameDisplay = document.getElementById('file-name-display');
@@ -156,13 +146,11 @@
         const downloadContainer = document.getElementById('download-container');
         const downloadList = document.getElementById('download-list');
         const downloadAllBtn = document.getElementById('download-all-btn');
-        
         const segmentsContainer = document.getElementById('segments-container');
         const addSegmentBtn = document.getElementById('add-segment-btn');
 
         let selectedFile = null;
 
-        // 시간 포맷 함수 (초 -> HH:MM:SS.mmm)
         function formatTime(seconds) {
             const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
             const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
@@ -197,33 +185,19 @@
             messageIcon.classList.remove('animate-spin');
         }
 
-        // ================= 실시간 다운로드 진행률 추적 함수 =================
-        async function fetchWithProgress(url, mimeType, progressCallback) {
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`네트워크 오류 (${response.status}): ${url}`);
-            
-            const contentLength = response.headers.get('content-length');
-            const total = contentLength ? parseInt(contentLength, 10) : 0;
-            let loaded = 0;
-
-            const reader = response.body.getReader();
-            const chunks = [];
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                chunks.push(value);
-                loaded += value.length;
-                
-                if (total) {
-                    progressCallback(Math.round((loaded / total) * 100));
-                } else {
-                    progressCallback((loaded / (1024 * 1024)).toFixed(1) + 'MB');
-                }
+        // ================= 안전한 파일 다운로드 및 Blob 변환 로직 =================
+        // 에러를 명확히 잡기 위해 커스텀 함수 구현
+        async function safeFetchBlobURL(url, mimeType) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status} 에러`);
+                const buffer = await response.arrayBuffer();
+                const blob = new Blob([buffer], { type: mimeType });
+                return URL.createObjectURL(blob);
+            } catch (err) {
+                console.error(`다운로드 실패 (${url}):`, err);
+                throw new Error(`${url.split('/').pop()} 파일을 가져오지 못했습니다. (${err.message})`);
             }
-
-            const blob = new Blob(chunks, { type: mimeType });
-            return URL.createObjectURL(blob);
         }
 
         // ================= 다중 구간 (Segments) 관리 로직 =================
@@ -231,8 +205,7 @@
             const items = segmentsContainer.querySelectorAll('.segment-item');
             items.forEach((item, index) => {
                 item.querySelector('.segment-index').textContent = index + 1;
-                const removeBtn = item.querySelector('.remove-segment-btn');
-                removeBtn.style.display = items.length === 1 ? 'none' : 'block';
+                item.querySelector('.remove-segment-btn').style.display = items.length === 1 ? 'none' : 'block';
             });
         }
 
@@ -276,6 +249,7 @@
             addSegment('00:00:00.000', formatTime(videoPreview.duration));
         });
 
+        // ================= 파일 핸들링 =================
         function handleFile(file) {
             if (!file) return;
             if (!file.type.startsWith('video/')) {
@@ -289,8 +263,7 @@
             
             if (videoPreview.src) URL.revokeObjectURL(videoPreview.src);
 
-            const videoURL = URL.createObjectURL(selectedFile);
-            videoPreview.src = videoURL;
+            videoPreview.src = URL.createObjectURL(selectedFile);
             videoContainer.classList.remove('hidden');
             
             videoPreview.onloadedmetadata = () => {
@@ -328,20 +301,19 @@
         });
 
         dropZone.addEventListener('drop', (e) => {
-            const files = e.dataTransfer.files;
-            if (files && files.length > 0) {
-                fileInput.files = files;
-                handleFile(files[0]);
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                fileInput.files = e.dataTransfer.files;
+                handleFile(e.dataTransfer.files[0]);
             }
         });
 
         downloadAllBtn.addEventListener('click', () => {
-            const links = downloadList.querySelectorAll('a');
-            links.forEach((link, index) => {
+            downloadList.querySelectorAll('a').forEach((link, index) => {
                 setTimeout(() => link.click(), index * 500); 
             });
         });
 
+        // ================= 3. 자르기 실행 이벤트 =================
         trimBtn.addEventListener('click', async () => {
             const segments = segmentsContainer.querySelectorAll('.segment-item');
             
@@ -361,47 +333,57 @@
                 downloadContainer.classList.remove('flex');
                 downloadList.innerHTML = '';
                 
-                // 엔진이 로드되지 않았다면 최초 1회 다운로드 진행
+                // 최초 1회 로드 진행
                 if (!ffmpeg.loaded) {
-                    const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-                    const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-                    
-                    // 다운로드 진행률을 UI에 업데이트하는 콜백 함수
-                    const updateProgress = (name) => (progress) => {
-                        const progNum = typeof progress === 'number' ? progress : 100;
-                        const progText = typeof progress === 'number' ? `${progress}%` : progress;
-                        
-                        showMessage('info', `
-                            <div class="font-bold text-base mb-1 text-blue-800">엔진 초기화 중...</div>
-                            <div class="text-sm text-blue-700 font-medium flex justify-between">
-                                <span>${name} 다운로드 중</span>
-                                <span>${progText}</span>
-                            </div>
-                            <div class="w-full bg-blue-200 rounded-full h-2.5 mt-2 mb-3 overflow-hidden">
-                                <div class="bg-blue-600 h-2.5 rounded-full" style="width: ${progNum}%; transition: width 0.2s;"></div>
-                            </div>
-                            <div class="text-xs text-gray-500 leading-relaxed">
-                                ※ 파일 크기(약 30MB)로 인해 네트워크 환경에 따라 10~30초가 소요될 수 있습니다.<br>
-                                ※ <b>최초 1회만 다운로드</b>하며, 완료 후 즉시 자르기가 시작됩니다!
-                            </div>
-                        `);
-                    };
+                    showMessage('info', `
+                        <div class="font-bold text-base mb-1 text-blue-800">엔진 초기화 중...</div>
+                        <div class="text-sm text-blue-700 font-medium flex justify-between">
+                            <span>필수 파일 다운로드 중 (약 30MB)</span>
+                            <span id="simulated-progress-text">0%</span>
+                        </div>
+                        <div class="w-full bg-blue-200 rounded-full h-2.5 mt-2 mb-3 overflow-hidden">
+                            <div id="simulated-progress-bar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%; transition: width 0.5s;"></div>
+                        </div>
+                        <div class="text-xs text-gray-500 leading-relaxed">
+                            ※ 네트워크 환경에 따라 10~30초가 소요될 수 있습니다.<br>
+                            ※ <b>최초 1회만 다운로드</b>하며, 완료 후 즉시 자르기가 시작됩니다!
+                        </div>
+                    `);
+
+                    // 시각적 가짜 진행률 바 (최대 90%까지 서서히 증가)
+                    let prog = 0;
+                    const progInt = setInterval(() => {
+                        prog += (90 - prog) * 0.05;
+                        const bar = document.getElementById('simulated-progress-bar');
+                        const txt = document.getElementById('simulated-progress-text');
+                        if (bar) bar.style.width = `${Math.round(prog)}%`;
+                        if (txt) txt.textContent = `${Math.round(prog)}%`;
+                    }, 500);
 
                     try {
-                        // 실시간 다운로드 기능으로 파일 로드 (CORS 완전 우회)
-                        const coreBlobURL = await fetchWithProgress(`${coreURL}/ffmpeg-core.js`, 'text/javascript', updateProgress('코어 스크립트'));
-                        const wasmBlobURL = await fetchWithProgress(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm', updateProgress('웹어셈블리 모듈 (가장 큼)'));
-                        const workerBlobURL = await fetchWithProgress(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript', updateProgress('백그라운드 워커'));
+                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+                        
+                        // 크로스오리진 워커 차단 문제를 완벽 해결하기 위해 파일들을 Blob으로 직접 다운로드 후 주입
+                        const coreBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript');
+                        const wasmBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm');
+                        const workerBlob = await safeFetchBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
 
-                        showMessage('info', '다운로드 완료! 시스템을 구성하고 있습니다...<br><span class="text-xs text-blue-600 mt-1 block">잠시만 기다려주세요.</span>');
+                        clearInterval(progInt);
+                        const bar = document.getElementById('simulated-progress-bar');
+                        if (bar) bar.style.width = `100%`;
+                        const txt = document.getElementById('simulated-progress-text');
+                        if (txt) txt.textContent = `100%`;
 
                         await ffmpeg.load({
-                            coreURL: coreBlobURL,
-                            wasmURL: wasmBlobURL,
-                            classWorkerURL: workerBlobURL
+                            coreURL: coreBlob,
+                            wasmURL: wasmBlob,
+                            classWorkerURL: workerBlob
                         });
+
                     } catch (loadErr) {
-                        throw new Error("엔진 다운로드 실패. 인터넷 연결 상태를 확인해주세요. (" + loadErr.message + ")");
+                        clearInterval(progInt);
+                        throw loadErr;
                     }
                 }
 
@@ -412,7 +394,7 @@
                 const ext = selectedFile.name.split('.').pop() || 'mp4';
                 let successCount = 0;
 
-                // 각 구간별로 순차적으로 처리
+                // 순차적 자르기
                 for (let i = 0; i < segments.length; i++) {
                     const start = segments[i].querySelector('.start-time').value;
                     const end = segments[i].querySelector('.end-time').value;
@@ -461,9 +443,8 @@
                 }
 
             } catch (error) {
-                console.error("FFmpeg 작업 중 상세 오류:", error);
-                let errorMsg = error instanceof Error ? error.message : (error?.message || error?.type || String(error));
-                if (errorMsg === '{}' || errorMsg === 'undefined' || !errorMsg) errorMsg = "초기화에 실패했습니다.";
+                console.error("작업 에러 발생:", error);
+                const errorMsg = error instanceof Error ? error.message : (error?.message || String(error));
                 showMessage('error', `작업 중 오류가 발생했습니다: ${errorMsg}`);
             } finally {
                 trimBtn.disabled = false;
