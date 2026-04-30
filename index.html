@@ -1,0 +1,284 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>웹 기반 MP4 자르기</title>
+    
+    <script src="https://cdn.jsdelivr.net/gh/gzuidhof/coi-serviceworker@master/coi-serviceworker.js"></script>
+
+    <!-- Tailwind CSS (스타일링) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons (아이콘) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- FFmpeg.wasm (동영상 처리 핵심 라이브러리) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    <style>
+        /* 추가적인 커스텀 스타일 */
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans text-gray-800 antialiased p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden">
+        <!-- 헤더 -->
+        <div class="bg-blue-600 text-white p-6 flex items-center gap-3">
+            <i data-lucide="scissors" class="w-8 h-8"></i>
+            <div>
+                <h1 class="text-2xl font-bold">웹 기반 MP4 자르기</h1>
+                <p class="text-blue-100 text-sm mt-1">서버 업로드 없이 브라우저에서 안전하고 빠르게 동영상을 자릅니다.</p>
+            </div>
+        </div>
+
+        <div class="p-6 md:p-8">
+            <!-- 1. 파일 선택 -->
+            <div class="mb-8">
+                <label class="block text-sm font-medium text-gray-700 mb-2">동영상 파일 선택 (MP4)</label>
+                <div class="flex items-center justify-center w-full">
+                    <label for="file-input" class="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition">
+                        <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                            <i data-lucide="upload-cloud" class="w-10 h-10 text-gray-400 mb-3"></i>
+                            <p class="mb-2 text-sm text-gray-500"><span class="font-semibold">클릭하여 파일 선택</span> 또는 드래그 앤 드롭</p>
+                            <p class="text-xs text-gray-500">MP4 형식 지원</p>
+                        </div>
+                        <input id="file-input" type="file" class="hidden" accept="video/mp4,video/x-m4v,video/*" />
+                    </label>
+                </div>
+                <p id="file-name-display" class="mt-2 text-sm text-blue-600 font-medium hidden"></p>
+            </div>
+
+            <!-- 2. 동영상 미리보기 -->
+            <div id="video-container" class="mb-8 hidden">
+                <video id="video-preview" controls class="w-full rounded-xl bg-black shadow-inner aspect-video"></video>
+            </div>
+
+            <!-- 3. 시간 설정 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <!-- 시작 시간 -->
+                <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                    <label class="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                        <i data-lucide="play-circle" class="w-4 h-4 text-green-600"></i> 시작 시간
+                    </label>
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="start-time" value="00:00:00.000" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-center" placeholder="HH:MM:SS.mmm">
+                        <button id="set-start-btn" class="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition flex items-center gap-1">
+                            <i data-lucide="crosshair" class="w-4 h-4"></i> 현재 위치
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 종료 시간 -->
+                <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                    <label class="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                        <i data-lucide="stop-circle" class="w-4 h-4 text-red-600"></i> 종료 시간
+                    </label>
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="end-time" value="00:00:00.000" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-center" placeholder="HH:MM:SS.mmm">
+                        <button id="set-end-btn" class="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition flex items-center gap-1">
+                            <i data-lucide="crosshair" class="w-4 h-4"></i> 현재 위치
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 메시지 출력 영역 -->
+            <div id="message-box" class="hidden mb-6 p-4 rounded-lg flex items-start gap-3">
+                <i id="message-icon" data-lucide="info" class="w-5 h-5 mt-0.5 flex-shrink-0"></i>
+                <div id="message-text" class="text-sm font-medium"></div>
+            </div>
+
+            <!-- 실행 버튼 -->
+            <button id="trim-btn" class="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-lg shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:shadow-none">
+                <i data-lucide="scissors" class="w-5 h-5"></i>
+                동영상 자르기 실행
+            </button>
+
+            <!-- 다운로드 영역 -->
+            <div id="download-container" class="mt-6 hidden flex flex-col items-center justify-center p-6 bg-green-50 border border-green-200 rounded-xl">
+                <p class="text-green-800 font-bold mb-4 flex items-center gap-2">
+                    <i data-lucide="check-circle-2" class="w-5 h-5"></i> 처리가 완료되었습니다!
+                </p>
+                <a id="download-link" href="#" class="px-8 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-md transition flex items-center gap-2">
+                    <i data-lucide="download" class="w-5 h-5"></i>
+                    잘린 동영상 다운로드
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- 푸터 (저작권 및 만든이) -->
+    <footer class="mt-8 text-center text-sm text-gray-500 pb-8">
+        <p>만든이: 곽현석(waurimal@snuecse.org)</p>
+        <p class="mt-1">Copyright &copy; WaurimaL. All Rights Reserved.</p>
+    </footer>
+
+    <!-- JavaScript 로직 -->
+    <script>
+        // 아이콘 초기화
+        lucide.createIcons();
+
+        // FFmpeg 설정
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = createFFmpeg({ 
+            log: true,
+            corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
+        });
+
+        // DOM 요소
+        const fileInput = document.getElementById('file-input');
+        const fileNameDisplay = document.getElementById('file-name-display');
+        const videoContainer = document.getElementById('video-container');
+        const videoPreview = document.getElementById('video-preview');
+        const startTimeInput = document.getElementById('start-time');
+        const endTimeInput = document.getElementById('end-time');
+        const setStartBtn = document.getElementById('set-start-btn');
+        const setEndBtn = document.getElementById('set-end-btn');
+        const trimBtn = document.getElementById('trim-btn');
+        const messageBox = document.getElementById('message-box');
+        const messageText = document.getElementById('message-text');
+        const messageIcon = document.getElementById('message-icon');
+        const downloadContainer = document.getElementById('download-container');
+        const downloadLink = document.getElementById('download-link');
+
+        let selectedFile = null;
+
+        // 시간 포맷 함수 (초 -> HH:MM:SS.mmm)
+        function formatTime(seconds) {
+            const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+            const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+            const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+            const ms = Math.floor((seconds % 1) * 1000).toString().padStart(3, '0');
+            return `${h}:${m}:${s}.${ms}`;
+        }
+
+        // 메시지 표시 함수
+        function showMessage(type, text) {
+            messageBox.classList.remove('hidden', 'bg-red-50', 'text-red-800', 'bg-blue-50', 'text-blue-800', 'bg-yellow-50', 'text-yellow-800');
+            messageBox.classList.add('flex');
+            
+            if (type === 'error') {
+                messageBox.classList.add('bg-red-50', 'text-red-800');
+                messageIcon.setAttribute('data-lucide', 'alert-circle');
+            } else if (type === 'info') {
+                messageBox.classList.add('bg-blue-50', 'text-blue-800');
+                messageIcon.setAttribute('data-lucide', 'loader-2');
+                messageIcon.classList.add('animate-spin');
+            } else if (type === 'warning') {
+                messageBox.classList.add('bg-yellow-50', 'text-yellow-800');
+                messageIcon.setAttribute('data-lucide', 'alert-triangle');
+            }
+            
+            messageText.innerHTML = text;
+            lucide.createIcons(); // 아이콘 갱신
+        }
+
+        function hideMessage() {
+            messageBox.classList.add('hidden');
+            messageBox.classList.remove('flex');
+            messageIcon.classList.remove('animate-spin');
+        }
+
+        // 1. 파일 선택 이벤트
+        fileInput.addEventListener('change', (e) => {
+            selectedFile = e.target.files[0];
+            if (selectedFile) {
+                // UI 업데이트
+                fileNameDisplay.textContent = `선택된 파일: ${selectedFile.name}`;
+                fileNameDisplay.classList.remove('hidden');
+                
+                // 미리보기 영상 설정
+                const videoURL = URL.createObjectURL(selectedFile);
+                videoPreview.src = videoURL;
+                videoContainer.classList.remove('hidden');
+                
+                // 메타데이터가 로드되면 종료 시간 설정
+                videoPreview.onloadedmetadata = () => {
+                    startTimeInput.value = '00:00:00.000';
+                    endTimeInput.value = formatTime(videoPreview.duration);
+                };
+
+                hideMessage();
+                downloadContainer.classList.add('hidden');
+            }
+        });
+
+        // 2. 현재 위치 시간 버튼 이벤트
+        setStartBtn.addEventListener('click', () => {
+            if (selectedFile) startTimeInput.value = formatTime(videoPreview.currentTime);
+        });
+
+        setEndBtn.addEventListener('click', () => {
+            if (selectedFile) endTimeInput.value = formatTime(videoPreview.currentTime);
+        });
+
+        // 3. 자르기 실행 이벤트
+        trimBtn.addEventListener('click', async () => {
+            if (!selectedFile) {
+                showMessage('error', '먼저 자를 동영상 파일을 선택해주세요.');
+                return;
+            }
+
+            // [중요] SharedArrayBuffer 지원 확인 (브라우저 보안 정책)
+            if (typeof SharedArrayBuffer === 'undefined') {
+                showMessage('error', '<b>브라우저 보안 정책(Cross-Origin) 제한</b>으로 인해 현재 환경에서는 실행할 수 없습니다.<br>GitHub Pages에 올리거나 로컬 서버에서 실행해주세요.');
+                return;
+            }
+
+            try {
+                trimBtn.disabled = true;
+                downloadContainer.classList.add('hidden');
+                
+                showMessage('info', '초기화 중입니다. (최초 1회 FFmpeg 코어 다운로드에 시간이 걸릴 수 있습니다...)');
+
+                // FFmpeg 로드
+                if (!ffmpeg.isLoaded()) {
+                    await ffmpeg.load();
+                }
+
+                showMessage('info', '파일을 준비하고 있습니다...');
+                // 파일을 FFmpeg 가상 메모리에 씁니다.
+                ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(selectedFile));
+
+                const start = startTimeInput.value;
+                const end = endTimeInput.value;
+
+                showMessage('info', `동영상을 자르는 중입니다...<br><span class="text-xs text-blue-600 mt-1 block">구간: ${start} ~ ${end} (인코딩 없이 복사되어 속도가 매우 빠릅니다)</span>`);
+                
+                // 자르기 명령어 실행 (-c copy 를 사용하여 재인코딩 없이 원본 화질 유지 및 고속 처리)
+                await ffmpeg.run('-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', 'output.mp4');
+
+                showMessage('info', '처리가 거의 완료되었습니다...');
+                
+                // 결과 파일 읽기
+                const data = ffmpeg.FS('readFile', 'output.mp4');
+
+                // Blob 및 URL 생성
+                const blob = new Blob([data.buffer], { type: 'video/mp4' });
+                const url = URL.createObjectURL(blob);
+
+                // 다운로드 링크 설정
+                downloadLink.href = url;
+                downloadLink.download = `잘림_${selectedFile.name}`;
+                downloadContainer.classList.remove('hidden');
+
+                hideMessage();
+
+                // 가상 파일 시스템 정리 (메모리 누수 방지)
+                try {
+                    ffmpeg.FS('unlink', 'input.mp4');
+                    ffmpeg.FS('unlink', 'output.mp4');
+                } catch(e) {}
+
+            } catch (error) {
+                console.error(error);
+                showMessage('error', `작업 중 오류가 발생했습니다: ${error.message}`);
+            } finally {
+                trimBtn.disabled = false;
+                messageIcon.classList.remove('animate-spin');
+            }
+        });
+    </script>
+</body>
+</html>
