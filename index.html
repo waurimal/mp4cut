@@ -1,20 +1,19 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
-    
-    <!-- ? GitHub Pages용 보안 헤더 우회 스크립트 (주석 해제됨) -->
-    <!-- 이 스크립트가 있어야 GitHub Pages에서 SharedArrayBuffer 에러가 발생하지 않습니다. -->
-    <script src="https://cdn.jsdelivr.net/gh/gzuidhof/coi-serviceworker@master/coi-serviceworker.js"></script>
 
     <!-- Tailwind CSS (스타일링) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- FFmpeg.wasm (동영상 처리 핵심 라이브러리) -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    
+    <!-- ✅ FFmpeg.wasm v0.12.x (보안 에러를 유발하지 않는 최신 버전으로 교체!) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+
     <style>
         /* 추가적인 커스텀 스타일 */
         input[type="time"]::-webkit-calendar-picker-indicator {
@@ -43,11 +42,12 @@
             <div class="mb-8">
                 <label class="block text-sm font-medium text-gray-700 mb-2">동영상 파일 선택 (MP4)</label>
                 <div class="flex items-center justify-center w-full">
+                    <!-- label로 복구하여 클릭 시 무한루프 충돌 방지 및 드래그 정상 인식 -->
                     <label id="drop-zone" for="file-input" class="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition relative">
-                        <div class="flex flex-col items-center justify-center pt-5 pb-6">
-                            <i data-lucide="upload-cloud" class="w-10 h-10 text-gray-400 mb-3 pointer-events-none"></i>
-                            <p class="mb-2 text-sm text-gray-500 pointer-events-none"><span class="font-semibold">클릭하여 파일 선택</span> 또는 드래그 앤 드롭</p>
-                            <p class="text-xs text-gray-500 pointer-events-none">MP4 형식 지원</p>
+                        <div class="flex flex-col items-center justify-center pt-5 pb-6 pointer-events-none">
+                            <i data-lucide="upload-cloud" class="w-10 h-10 text-gray-400 mb-3"></i>
+                            <p class="mb-2 text-sm text-gray-500"><span class="font-semibold text-blue-600">클릭하여 파일 선택</span> 또는 여기로 드래그 앤 드롭</p>
+                            <p class="text-xs text-gray-400 mt-1">MP4 형식 지원</p>
                         </div>
                         <input id="file-input" type="file" class="hidden" accept="video/mp4,video/x-m4v,video/*" />
                     </label>
@@ -125,12 +125,10 @@
         // 아이콘 초기화
         lucide.createIcons();
 
-        // FFmpeg 설정
-        const { createFFmpeg, fetchFile } = FFmpeg;
-        const ffmpeg = createFFmpeg({ 
-            log: true,
-            corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
-        });
+        // 최신 FFmpeg v0.12.x 객체 가져오기
+        const { FFmpeg } = window.FFmpegWASM;
+        const { fetchFile } = window.FFmpegUtil;
+        const ffmpeg = new FFmpeg();
 
         // DOM 요소
         const dropZone = document.getElementById('drop-zone');
@@ -187,7 +185,7 @@
             messageIcon.classList.remove('animate-spin');
         }
 
-        // 파일 처리 메인 함수
+        // 1. 파일 처리 메인 함수
         function handleFile(file) {
             if (!file) return;
             
@@ -203,7 +201,10 @@
             fileNameDisplay.textContent = `선택된 파일: ${selectedFile.name}`;
             fileNameDisplay.classList.remove('hidden');
             
-            // 미리보기 영상 설정
+            // 기존 미리보기 URL 메모리 해제
+            if (videoPreview.src) URL.revokeObjectURL(videoPreview.src);
+
+            // 새 미리보기 영상 설정
             const videoURL = URL.createObjectURL(selectedFile);
             videoPreview.src = videoURL;
             videoContainer.classList.remove('hidden');
@@ -218,32 +219,47 @@
             downloadContainer.classList.add('hidden');
         }
 
-        // 1-1. 클릭하여 파일 선택 이벤트
-        fileInput.addEventListener('change', (e) => {
-            handleFile(e.target.files[0]);
+        // ================= 드래그 앤 드롭 및 클릭 이벤트 =================
+        // 클릭으로 파일 선택 시 (브라우저 기본 label 태그 기능 활용)
+        fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+        // 브라우저 화면 전체에 드롭했을 때 파일이 열려버리는 기본 동작 방지
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            window.addEventListener(eventName, preventDefaults, false);
+            dropZone.addEventListener(eventName, preventDefaults, false);
         });
 
-        // 1-2. 드래그 앤 드롭 이벤트 처리 추가
-        dropZone.addEventListener('dragover', (e) => {
+        function preventDefaults(e) {
             e.preventDefault();
-            dropZone.classList.add('bg-blue-50', 'border-blue-400');
+            e.stopPropagation();
+        }
+
+        // 마우스가 영역 안으로 들어올 때 스타일 변경
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.add('bg-blue-50', 'border-blue-500');
+                dropZone.classList.remove('border-gray-300', 'bg-gray-50');
+            }, false);
         });
 
-        dropZone.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('bg-blue-50', 'border-blue-400');
+        // 마우스가 영역 밖으로 나갈 때 스타일 원상복구
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.remove('bg-blue-50', 'border-blue-500');
+                dropZone.classList.add('border-gray-300', 'bg-gray-50');
+            }, false);
         });
 
+        // 파일을 떨어뜨렸을 때
         dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('bg-blue-50', 'border-blue-400');
-            
-            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                // input 파일 값 교체 및 파일 처리
-                fileInput.files = e.dataTransfer.files;
-                handleFile(e.dataTransfer.files[0]);
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files && files.length > 0) {
+                fileInput.files = files; // input 요소에 파일 할당
+                handleFile(files[0]);
             }
         });
+        // ================================================================
 
         // 2. 현재 위치 시간 버튼 이벤트
         setStartBtn.addEventListener('click', () => {
@@ -261,55 +277,49 @@
                 return;
             }
 
-            // [중요] SharedArrayBuffer 지원 확인 (브라우저 보안 정책)
-            if (typeof SharedArrayBuffer === 'undefined') {
-                showMessage('error', '<b>브라우저 보안 정책(Cross-Origin) 제한</b>으로 인해 현재 환경에서는 실행할 수 없습니다.<br>페이지를 새로고침(F5) 해주세요.');
-                return;
-            }
-
             try {
                 trimBtn.disabled = true;
                 downloadContainer.classList.add('hidden');
                 
-                showMessage('info', '초기화 중입니다. (최초 1회 FFmpeg 코어 다운로드에 시간이 걸릴 수 있습니다...)');
-
-                // FFmpeg 로드
-                if (!ffmpeg.isLoaded()) {
-                    await ffmpeg.load();
+                // FFmpeg 로드 (최초 1회만 실행됨)
+                if (!ffmpeg.loaded) {
+                    showMessage('info', '초기화 중입니다. (최초 1회 코어 파일 로딩에 시간이 걸릴 수 있습니다...)');
+                    await ffmpeg.load({
+                        coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+                        wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
+                    });
                 }
 
-                showMessage('info', '파일을 준비하고 있습니다...');
-                // 파일을 FFmpeg 가상 메모리에 씁니다.
-                ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(selectedFile));
+                showMessage('info', '파일을 가상 메모리에 복사하고 있습니다...');
+                await ffmpeg.writeFile('input.mp4', await fetchFile(selectedFile));
 
                 const start = startTimeInput.value;
                 const end = endTimeInput.value;
 
-                showMessage('info', `동영상을 자르는 중입니다...<br><span class="text-xs text-blue-600 mt-1 block">구간: ${start} ~ ${end} (인코딩 없이 복사되어 속도가 매우 빠릅니다)</span>`);
+                showMessage('info', `동영상을 자르는 중입니다...<br><span class="text-xs text-blue-600 mt-1 block">구간: ${start} ~ ${end} (인코딩 없이 고속 처리 중)</span>`);
                 
-                // 자르기 명령어 실행 (-c copy 를 사용하여 재인코딩 없이 원본 화질 유지 및 고속 처리)
-                await ffmpeg.run('-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', 'output.mp4');
+                // 자르기 명령어 실행 (최신 버전 API 규격 반영)
+                await ffmpeg.exec(['-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', 'output.mp4']);
 
-                showMessage('info', '처리가 거의 완료되었습니다...');
+                showMessage('info', '처리가 완료되어 파일을 생성하고 있습니다...');
                 
                 // 결과 파일 읽기
-                const data = ffmpeg.FS('readFile', 'output.mp4');
+                const data = await ffmpeg.readFile('output.mp4');
 
-                // Blob 및 URL 생성
+                // Blob 및 다운로드 링크 생성
                 const blob = new Blob([data.buffer], { type: 'video/mp4' });
                 const url = URL.createObjectURL(blob);
 
-                // 다운로드 링크 설정
                 downloadLink.href = url;
                 downloadLink.download = `잘림_${selectedFile.name}`;
                 downloadContainer.classList.remove('hidden');
 
                 hideMessage();
 
-                // 가상 파일 시스템 정리 (메모리 누수 방지)
+                // 가상 메모리 확보를 위해 임시 파일 삭제
                 try {
-                    ffmpeg.FS('unlink', 'input.mp4');
-                    ffmpeg.FS('unlink', 'output.mp4');
+                    await ffmpeg.deleteFile('input.mp4');
+                    await ffmpeg.deleteFile('output.mp4');
                 } catch(e) {}
 
             } catch (error) {
@@ -317,7 +327,7 @@
                 showMessage('error', `작업 중 오류가 발생했습니다: ${error.message}`);
             } finally {
                 trimBtn.disabled = false;
-                messageIcon.classList.remove('animate-spin');
+                if(messageIcon) messageIcon.classList.remove('animate-spin');
             }
         });
     </script>
