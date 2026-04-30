@@ -5,31 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
 
-    <!-- 꼬여버린 서비스 워커 캐시를 안전하게 청소하는 스크립트 -->
-    <script>
-        window.addEventListener('load', () => {
-            try {
-                if ('serviceWorker' in navigator) {
-                    navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                        for(let registration of registrations) {
-                            registration.unregister().then(() => {
-                                console.log('과거 캐시 워커 삭제 완료');
-                            }).catch(() => {});
-                        }
-                    }).catch(() => {});
-                }
-            } catch (e) {}
-        });
-    </script>
-
     <!-- Tailwind CSS (스타일링) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 unpkg CDN으로 통일) -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 JSDelivr CDN으로 통일) -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -331,26 +314,30 @@
                         </div>
                     `);
 
-                    try {
-                        const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-                        const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-                        
-                        // [메모리 초과 에러(undefined) 완벽 해결]
-                        // 무거운 코어 파일(30MB)은 브라우저가 직접 받도록 기본 URL을 넘기고,
-                        // Cross-Origin(CORS) 에러를 뱉는 아주 작은 '워커' 파일만 Blob으로 우회시켜 로드합니다.
-                        const workerBlobURL = await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
+                    let coreBlobURL, wasmBlobURL, workerBlobURL;
 
+                    // [해결 완결판] 모든 핵심 파일을 Blob URL로 강제로 변환하여 브라우저의 Cross-Origin 제한을 100% 무력화합니다.
+                    try {
+                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+
+                        coreBlobURL = await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript');
+                        wasmBlobURL = await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm');
+                        workerBlobURL = await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
+                    } catch (downloadErr) {
+                        console.error("Blob 다운로드 실패:", downloadErr);
+                        throw new Error(`필수 모듈 다운로드 차단됨: 사내망 방화벽이나 확장 프로그램(애드블록 등)이 CDN 접근을 막고 있을 수 있습니다. (상세: ${downloadErr.message})`);
+                    }
+
+                    try {
                         await ffmpeg.load({
-                            coreURL: `${coreURL}/ffmpeg-core.js`,
-                            wasmURL: `${coreURL}/ffmpeg-core.wasm`,
+                            coreURL: coreBlobURL,
+                            wasmURL: wasmBlobURL,
                             classWorkerURL: workerBlobURL
                         });
-                        
                     } catch (loadErr) {
                         console.error("FFmpeg 로드 상세 에러:", loadErr);
-                        // 에러 객체가 비어있거나 undefined일 경우를 대비해 명확한 텍스트로 치환합니다.
-                        const detail = loadErr?.message || (typeof loadErr === 'string' ? loadErr : "네트워크 차단 또는 메모리 부족");
-                        throw new Error(`필수 모듈 로딩 실패: ${detail}`);
+                        throw new Error(`엔진 구동 실패: 브라우저가 지원하지 않거나 메모리가 부족합니다. (상세: ${loadErr.message})`);
                     }
                 }
 
