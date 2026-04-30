@@ -142,7 +142,31 @@
         // 아이콘 초기화
         lucide.createIcons();
 
-        // 최신 FFmpeg v0.12.x 객체 가져오기 (Blob 우회를 위해 toBlobURL 추가)
+        // =========================================================================
+        // [중요] 브라우저 CORS 보안 정책 우회 패치 (Monkey Patching)
+        // 외부 CDN에서 Web Worker를 직접 불러오면 브라우저가 보안상 차단합니다.
+        // Worker 객체 생성을 가로채어 Blob 기반의 안전한 내부 실행 환경으로 강제 변환합니다.
+        // =========================================================================
+        if (!window.Worker.isPatched) {
+            const OriginalWorker = window.Worker;
+            window.Worker = function(url, options) {
+                try {
+                    const urlString = url instanceof URL ? url.href : url.toString();
+                    // 외부 링크(http)이면서 현재 사이트 주소가 아닌 경우 가로채기
+                    if (urlString.startsWith('http') && !urlString.startsWith(window.location.origin)) {
+                        // importScripts를 사용하여 우회 다운로드 및 실행
+                        const blob = new Blob([`importScripts('${urlString}');`], { type: 'application/javascript' });
+                        return new OriginalWorker(URL.createObjectURL(blob), options);
+                    }
+                } catch (e) {
+                    console.warn('Worker 우회 패치 실패:', e);
+                }
+                return new OriginalWorker(url, options);
+            };
+            window.Worker.isPatched = true; // 중복 적용 방지
+        }
+
+        // 최신 FFmpeg v0.12.x 객체 가져오기
         const { FFmpeg } = window.FFmpegWASM;
         const { fetchFile, toBlobURL } = window.FFmpegUtil;
         const ffmpeg = new FFmpeg();
@@ -302,14 +326,12 @@
                 if (!ffmpeg.loaded) {
                     showMessage('info', '초기화 중입니다. (브라우저 정책 우회를 위해 코어 파일을 가져오는 중입니다...)');
                     
-                    // Cross-Origin Worker 오류를 막기 위해 파일을 Blob으로 변환하여 로드합니다.
+                    // 패치(Monkey Patch)가 완료되었으므로 coreURL과 wasmURL만 Blob으로 묶어주면 안전하게 로드됩니다.
                     const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-                    const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
 
                     await ffmpeg.load({
                         coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
-                        wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
-                        classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript')
+                        wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm')
                     });
                 }
 
@@ -321,7 +343,7 @@
 
                 showMessage('info', `동영상을 자르는 중입니다...<br><span class="text-xs text-blue-600 mt-1 block">구간: ${start} ~ ${end} (인코딩 없이 고속 처리 중)</span>`);
                 
-                // 자르기 명령어 실행 (최신 버전 API 규격 반영)
+                // 자르기 명령어 실행
                 await ffmpeg.exec(['-i', 'input.mp4', '-ss', start, '-to', end, '-c', 'copy', 'output.mp4']);
 
                 showMessage('info', '처리가 완료되어 파일을 생성하고 있습니다...');
