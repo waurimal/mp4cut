@@ -5,7 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
 
-    <!-- 꼬여버린 서비스 워커 캐시를 안전하게 청소하는 스크립트 -->
+    <!-- [핵심 1] 브라우저의 Web Worker 보안 차단(CORS)을 가볍게 우회하는 패치 -->
+    <script>
+        if (!window.Worker.isPatched) {
+            const OriginalWorker = window.Worker;
+            window.Worker = function(url, options) {
+                try {
+                    const urlString = url instanceof URL ? url.href : url.toString();
+                    if (urlString.startsWith('http') && !urlString.startsWith(window.location.origin)) {
+                        const blob = new Blob([`importScripts('${urlString}');`], { type: 'application/javascript' });
+                        return new OriginalWorker(URL.createObjectURL(blob), options);
+                    }
+                } catch (e) {}
+                return new OriginalWorker(url, options);
+            };
+            window.Worker.isPatched = true;
+        }
+    </script>
+
+    <!-- [핵심 2] 꼬여버린 서비스 워커 캐시를 강제 청소하는 스크립트 -->
     <script>
         window.addEventListener('load', () => {
             try {
@@ -25,9 +43,9 @@
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm 버전을 모두 0.12.6으로 정확하게 일치시킵니다. -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- ✅ FFmpeg.wasm: 0.12.10 최신 버전과 안정적인 JSDelivr CDN 사용 -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -186,23 +204,6 @@
             messageIcon.classList.remove('animate-spin');
         }
 
-        // ================= 안전한 모듈 다운로드 함수 (404 에러 방지) =================
-        async function safeFetchBlobURL(url, mimeType) {
-            try {
-                const response = await fetch(url);
-                // 파일이 없을 경우(404) 확실하게 에러를 던져서 쓰레기 데이터 생성을 막습니다.
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status} 에러 - 파일을 찾을 수 없습니다.`);
-                }
-                const buffer = await response.arrayBuffer();
-                const blob = new Blob([buffer], { type: mimeType });
-                return URL.createObjectURL(blob);
-            } catch (err) {
-                console.error(`다운로드 실패 (${url}):`, err);
-                throw new Error(`'${url.split('/').pop()}' 모듈 로드 실패 (${err.message})`);
-            }
-        }
-
         // ================= 다중 구간 (Segments) 관리 로직 =================
         function updateSegmentIndices() {
             const items = segmentsContainer.querySelectorAll('.segment-item');
@@ -341,7 +342,7 @@
                     showMessage('info', `
                         <div class="font-bold text-base mb-1 text-blue-800">엔진 초기화 중...</div>
                         <div class="text-sm text-blue-700 font-medium flex justify-between">
-                            <span>동영상 처리 모듈 다운로드 중 (약 30MB)</span>
+                            <span>동영상 처리 모듈 로드 중 (약 30MB)</span>
                             <span id="simulated-progress-text">0%</span>
                         </div>
                         <div class="w-full bg-blue-200 rounded-full h-2.5 mt-2 mb-3 overflow-hidden">
@@ -363,25 +364,23 @@
                     }, 500);
 
                     try {
-                        // [핵심 해결] 모든 버전을 0.12.6으로 통일하여 워커 이름(814.ffmpeg.js) 불일치로 인한 404 에러를 방지합니다.
-                        const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-                        const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd';
-                        
-                        const coreBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript');
-                        const wasmBlob = await safeFetchBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm');
-                        const workerBlob = await safeFetchBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
+                        // [최종 해결책] 
+                        // 불안정한 Blob 우회 방식을 완전히 걷어내고 순정 CDN URL을 직통으로 연결합니다.
+                        // (메모리 중첩 충돌 에러와 proxy_main 에러가 모두 해결됩니다.)
+                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+
+                        await ffmpeg.load({
+                            coreURL: `${coreURL}/ffmpeg-core.js`,
+                            wasmURL: `${coreURL}/ffmpeg-core.wasm`,
+                            classWorkerURL: `${ffmpegURL}/814.ffmpeg.js`
+                        });
 
                         clearInterval(progInt);
                         const bar = document.getElementById('simulated-progress-bar');
                         const txt = document.getElementById('simulated-progress-text');
                         if (bar) bar.style.width = `100%`;
                         if (txt) txt.textContent = `100%`;
-
-                        await ffmpeg.load({
-                            coreURL: coreBlob,
-                            wasmURL: wasmBlob,
-                            classWorkerURL: workerBlob
-                        });
                         
                     } catch (loadErr) {
                         clearInterval(progInt);
