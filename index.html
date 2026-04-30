@@ -5,14 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
 
+    <!-- 꼬여버린 서비스 워커 캐시를 안전하게 청소하는 스크립트 -->
+    <script>
+        window.addEventListener('load', () => {
+            try {
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                        for(let registration of registrations) {
+                            registration.unregister().then(() => {
+                                console.log('과거 캐시 워커 삭제 완료');
+                            }).catch(() => {});
+                        }
+                    }).catch(() => {});
+                }
+            } catch (e) {}
+        });
+    </script>
+
     <!-- Tailwind CSS (스타일링) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm v0.12.x (안정적인 JSDelivr CDN으로 통일) -->
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- ✅ FFmpeg.wasm v0.12.x (공식 가이드라인의 unpkg CDN 적용) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -314,30 +331,30 @@
                         </div>
                     `);
 
-                    let coreBlobURL, wasmBlobURL, workerBlobURL;
-
-                    // [해결 완결판] 모든 핵심 파일을 Blob URL로 강제로 변환하여 브라우저의 Cross-Origin 제한을 100% 무력화합니다.
+                    // [에러 완벽 해결 원리]
+                    // Web Worker 스크립트(814.ffmpeg.js)는 외부 도메인(unpkg)에서 바로 불러오면 Cross-Origin(CORS) 오류로 막힙니다.
+                    // 따라서 이것 1개만 Blob으로 우회시켜 안전하게 로드합니다.
+                    // 반대로 core.js와 core.wasm은 우회(Blob)하면 내부 경로를 찾지 못해 failed to import 에러를 냅니다.
+                    // 따라서 코어 2개는 원래 CDN URL을 그대로 전달하여 충돌을 막습니다.
+                    const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                    const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+                    
+                    let workerBlobURL;
                     try {
-                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-
-                        coreBlobURL = await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript');
-                        wasmBlobURL = await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm');
                         workerBlobURL = await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
-                    } catch (downloadErr) {
-                        console.error("Blob 다운로드 실패:", downloadErr);
-                        throw new Error(`필수 모듈 다운로드 차단됨: 사내망 방화벽이나 확장 프로그램(애드블록 등)이 CDN 접근을 막고 있을 수 있습니다. (상세: ${downloadErr.message})`);
+                    } catch (e) {
+                        throw new Error("보안 우회 모듈을 다운로드하지 못했습니다. (네트워크나 애드블록 차단 확인 필요)");
                     }
 
                     try {
                         await ffmpeg.load({
-                            coreURL: coreBlobURL,
-                            wasmURL: wasmBlobURL,
+                            coreURL: `${coreURL}/ffmpeg-core.js`,
+                            wasmURL: `${coreURL}/ffmpeg-core.wasm`,
                             classWorkerURL: workerBlobURL
                         });
+                        URL.revokeObjectURL(workerBlobURL); // 로딩 성공 후 메모리 정리
                     } catch (loadErr) {
-                        console.error("FFmpeg 로드 상세 에러:", loadErr);
-                        throw new Error(`엔진 구동 실패: 브라우저가 지원하지 않거나 메모리가 부족합니다. (상세: ${loadErr.message})`);
+                        throw new Error(`모듈 초기화 실패: ${loadErr.message}`);
                     }
                 }
 
