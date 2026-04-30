@@ -5,25 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
 
-    <!-- [핵심 1] 브라우저의 Web Worker 보안 차단(CORS)을 가볍게 우회하는 패치 -->
-    <script>
-        if (!window.Worker.isPatched) {
-            const OriginalWorker = window.Worker;
-            window.Worker = function(url, options) {
-                try {
-                    const urlString = url instanceof URL ? url.href : url.toString();
-                    if (urlString.startsWith('http') && !urlString.startsWith(window.location.origin)) {
-                        const blob = new Blob([`importScripts('${urlString}');`], { type: 'application/javascript' });
-                        return new OriginalWorker(URL.createObjectURL(blob), options);
-                    }
-                } catch (e) {}
-                return new OriginalWorker(url, options);
-            };
-            window.Worker.isPatched = true;
-        }
-    </script>
-
-    <!-- [핵심 2] 꼬여버린 서비스 워커 캐시를 강제 청소하는 스크립트 -->
+    <!-- 꼬여버린 서비스 워커 캐시를 강제 청소하는 스크립트 -->
     <script>
         window.addEventListener('load', () => {
             try {
@@ -43,9 +25,9 @@
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm: 0.12.10 최신 버전과 안정적인 JSDelivr CDN 사용 -->
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- ✅ FFmpeg.wasm: 강력한 캐시 무력화(?v=final) 꼬리표 추가 -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js?v=final"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js?v=final"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -144,10 +126,9 @@
 
         // FFmpeg 객체 초기화
         const { FFmpeg } = window.FFmpegWASM;
-        const { fetchFile } = window.FFmpegUtil;
+        const { fetchFile, toBlobURL } = window.FFmpegUtil;
         const ffmpeg = new FFmpeg();
 
-        // 내부 작업 상황을 브라우저 콘솔(F12)에 출력
         ffmpeg.on('log', ({ message }) => {
             console.log('[FFmpeg Log]', message);
         });
@@ -364,16 +345,16 @@
                     }, 500);
 
                     try {
-                        // [최종 해결책] 
-                        // 불안정한 Blob 우회 방식을 완전히 걷어내고 순정 CDN URL을 직통으로 연결합니다.
-                        // (메모리 중첩 충돌 에러와 proxy_main 에러가 모두 해결됩니다.)
-                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+                        // [최종 핵심 해결] 
+                        // 브라우저 캐시 무시(?v=final) + 순정 Blob 변환을 사용하여 완벽하게 CORS 에러를 무력화합니다.
+                        const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                        const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+                        const cb = '?v=final';
 
                         await ffmpeg.load({
-                            coreURL: `${coreURL}/ffmpeg-core.js`,
-                            wasmURL: `${coreURL}/ffmpeg-core.wasm`,
-                            classWorkerURL: `${ffmpegURL}/814.ffmpeg.js`
+                            coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js${cb}`, 'text/javascript'),
+                            wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm${cb}`, 'application/wasm'),
+                            classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js${cb}`, 'text/javascript')
                         });
 
                         clearInterval(progInt);
@@ -387,10 +368,6 @@
                         console.error("FFmpeg 로드 에러:", loadErr);
                         throw new Error(loadErr.message);
                     }
-                }
-
-                if (selectedFile.size > 500 * 1024 * 1024) {
-                    console.warn("파일 크기가 500MB를 초과하여 브라우저 메모리에 부담을 줄 수 있습니다.");
                 }
 
                 showMessage('info', '파일을 메모리에 준비하고 있습니다...');
