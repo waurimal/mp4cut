@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
     
+    <!-- ? GitHub Pages용 보안 헤더 우회 스크립트 (주석 해제됨) -->
+    <!-- 이 스크립트가 있어야 GitHub Pages에서 SharedArrayBuffer 에러가 발생하지 않습니다. -->
     <script src="https://cdn.jsdelivr.net/gh/gzuidhof/coi-serviceworker@master/coi-serviceworker.js"></script>
 
     <!-- Tailwind CSS (스타일링) -->
@@ -17,6 +19,10 @@
         /* 추가적인 커스텀 스타일 */
         input[type="time"]::-webkit-calendar-picker-indicator {
             cursor: pointer;
+        }
+        /* 드래그 앤 드롭 활성화 시 트랜지션 */
+        #drop-zone {
+            transition: all 0.2s ease;
         }
     </style>
 </head>
@@ -33,15 +39,15 @@
         </div>
 
         <div class="p-6 md:p-8">
-            <!-- 1. 파일 선택 -->
+            <!-- 1. 파일 선택 (드래그 앤 드롭 영역) -->
             <div class="mb-8">
                 <label class="block text-sm font-medium text-gray-700 mb-2">동영상 파일 선택 (MP4)</label>
                 <div class="flex items-center justify-center w-full">
-                    <label for="file-input" class="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition">
+                    <label id="drop-zone" for="file-input" class="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition relative">
                         <div class="flex flex-col items-center justify-center pt-5 pb-6">
-                            <i data-lucide="upload-cloud" class="w-10 h-10 text-gray-400 mb-3"></i>
-                            <p class="mb-2 text-sm text-gray-500"><span class="font-semibold">클릭하여 파일 선택</span> 또는 드래그 앤 드롭</p>
-                            <p class="text-xs text-gray-500">MP4 형식 지원</p>
+                            <i data-lucide="upload-cloud" class="w-10 h-10 text-gray-400 mb-3 pointer-events-none"></i>
+                            <p class="mb-2 text-sm text-gray-500 pointer-events-none"><span class="font-semibold">클릭하여 파일 선택</span> 또는 드래그 앤 드롭</p>
+                            <p class="text-xs text-gray-500 pointer-events-none">MP4 형식 지원</p>
                         </div>
                         <input id="file-input" type="file" class="hidden" accept="video/mp4,video/x-m4v,video/*" />
                     </label>
@@ -127,6 +133,7 @@
         });
 
         // DOM 요소
+        const dropZone = document.getElementById('drop-zone');
         const fileInput = document.getElementById('file-input');
         const fileNameDisplay = document.getElementById('file-name-display');
         const videoContainer = document.getElementById('video-container');
@@ -180,27 +187,61 @@
             messageIcon.classList.remove('animate-spin');
         }
 
-        // 1. 파일 선택 이벤트
-        fileInput.addEventListener('change', (e) => {
-            selectedFile = e.target.files[0];
-            if (selectedFile) {
-                // UI 업데이트
-                fileNameDisplay.textContent = `선택된 파일: ${selectedFile.name}`;
-                fileNameDisplay.classList.remove('hidden');
-                
-                // 미리보기 영상 설정
-                const videoURL = URL.createObjectURL(selectedFile);
-                videoPreview.src = videoURL;
-                videoContainer.classList.remove('hidden');
-                
-                // 메타데이터가 로드되면 종료 시간 설정
-                videoPreview.onloadedmetadata = () => {
-                    startTimeInput.value = '00:00:00.000';
-                    endTimeInput.value = formatTime(videoPreview.duration);
-                };
+        // 파일 처리 메인 함수
+        function handleFile(file) {
+            if (!file) return;
+            
+            // 동영상 파일인지 검증
+            if (!file.type.startsWith('video/')) {
+                showMessage('error', '동영상 파일만 업로드할 수 있습니다.');
+                return;
+            }
 
-                hideMessage();
-                downloadContainer.classList.add('hidden');
+            selectedFile = file;
+            
+            // UI 업데이트
+            fileNameDisplay.textContent = `선택된 파일: ${selectedFile.name}`;
+            fileNameDisplay.classList.remove('hidden');
+            
+            // 미리보기 영상 설정
+            const videoURL = URL.createObjectURL(selectedFile);
+            videoPreview.src = videoURL;
+            videoContainer.classList.remove('hidden');
+            
+            // 메타데이터가 로드되면 종료 시간 설정
+            videoPreview.onloadedmetadata = () => {
+                startTimeInput.value = '00:00:00.000';
+                endTimeInput.value = formatTime(videoPreview.duration);
+            };
+
+            hideMessage();
+            downloadContainer.classList.add('hidden');
+        }
+
+        // 1-1. 클릭하여 파일 선택 이벤트
+        fileInput.addEventListener('change', (e) => {
+            handleFile(e.target.files[0]);
+        });
+
+        // 1-2. 드래그 앤 드롭 이벤트 처리 추가
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('bg-blue-50', 'border-blue-400');
+        });
+
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('bg-blue-50', 'border-blue-400');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('bg-blue-50', 'border-blue-400');
+            
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                // input 파일 값 교체 및 파일 처리
+                fileInput.files = e.dataTransfer.files;
+                handleFile(e.dataTransfer.files[0]);
             }
         });
 
@@ -222,7 +263,7 @@
 
             // [중요] SharedArrayBuffer 지원 확인 (브라우저 보안 정책)
             if (typeof SharedArrayBuffer === 'undefined') {
-                showMessage('error', '<b>브라우저 보안 정책(Cross-Origin) 제한</b>으로 인해 현재 환경에서는 실행할 수 없습니다.<br>GitHub Pages에 올리거나 로컬 서버에서 실행해주세요.');
+                showMessage('error', '<b>브라우저 보안 정책(Cross-Origin) 제한</b>으로 인해 현재 환경에서는 실행할 수 없습니다.<br>페이지를 새로고침(F5) 해주세요.');
                 return;
             }
 
