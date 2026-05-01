@@ -5,7 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>웹 기반 MP4 자르기</title>
 
-    <!-- 꼬여버린 서비스 워커 캐시를 강제 청소하는 스크립트 -->
+    <!-- [핵심 1] FFmpeg 라이브러리의 버그 및 브라우저 CORS 차단을 완벽하게 우회하는 패치 -->
+    <script>
+        if (!window.Worker.isPatched) {
+            const OriginalWorker = window.Worker;
+            window.Worker = function(url, options) {
+                let finalUrl = url instanceof URL ? url.href : url.toString();
+                let finalOptions = options ? { ...options } : {};
+                
+                // FFmpeg 0.12.x 라이브러리가 Worker를 'module' 타입으로 강제 생성하여 
+                // 내부에서 importScripts() 호출 시 발생하는 TypeError를 완벽히 차단합니다.
+                if (finalOptions.type === 'module') {
+                    delete finalOptions.type;
+                }
+
+                // 외부 CDN에서 스크립트를 불러올 때 발생하는 브라우저의 보안(Cross-Origin) 차단을 우회합니다.
+                if (finalUrl.startsWith('http') && !finalUrl.startsWith(window.location.origin)) {
+                    const blobContent = `importScripts('${finalUrl}');`;
+                    const blob = new Blob([blobContent], { type: 'application/javascript' });
+                    finalUrl = URL.createObjectURL(blob);
+                }
+                
+                return new OriginalWorker(finalUrl, finalOptions);
+            };
+            window.Worker.isPatched = true;
+        }
+    </script>
+
+    <!-- [핵심 2] 꼬여버린 서비스 워커 캐시를 강제 청소하는 스크립트 -->
     <script>
         window.addEventListener('load', () => {
             try {
@@ -25,9 +52,9 @@
     <!-- Lucide Icons (아이콘) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- ✅ FFmpeg.wasm: 강력한 캐시 무력화(?v=final) 꼬리표 추가 -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js?v=final"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js?v=final"></script>
+    <!-- ✅ FFmpeg.wasm: 빠르고 안정적인 JSDelivr CDN 사용 -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         input[type="time"]::-webkit-calendar-picker-indicator { cursor: pointer; }
@@ -126,7 +153,7 @@
 
         // FFmpeg 객체 초기화
         const { FFmpeg } = window.FFmpegWASM;
-        const { fetchFile, toBlobURL } = window.FFmpegUtil;
+        const { fetchFile } = window.FFmpegUtil;
         const ffmpeg = new FFmpeg();
 
         ffmpeg.on('log', ({ message }) => {
@@ -322,52 +349,35 @@
                 if (!ffmpeg.loaded) {
                     showMessage('info', `
                         <div class="font-bold text-base mb-1 text-blue-800">엔진 초기화 중...</div>
-                        <div class="text-sm text-blue-700 font-medium flex justify-between">
-                            <span>동영상 처리 모듈 로드 중 (약 30MB)</span>
-                            <span id="simulated-progress-text">0%</span>
-                        </div>
-                        <div class="w-full bg-blue-200 rounded-full h-2.5 mt-2 mb-3 overflow-hidden">
-                            <div id="simulated-progress-bar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%; transition: width 0.5s;"></div>
-                        </div>
-                        <div class="text-xs text-gray-500 leading-relaxed">
+                        <div class="text-sm text-blue-700 font-medium">동영상 처리 모듈 로드 중 (약 30MB)</div>
+                        <div class="text-xs text-gray-500 leading-relaxed mt-2">
                             ※ 네트워크 환경에 따라 10~30초 가량 소요됩니다.<br>
                             ※ <b>최초 1회만 진행</b>되며, 완료 시 즉시 작업이 시작됩니다!
                         </div>
                     `);
 
-                    let prog = 0;
-                    const progInt = setInterval(() => {
-                        prog += (90 - prog) * 0.05;
-                        const bar = document.getElementById('simulated-progress-bar');
-                        const txt = document.getElementById('simulated-progress-text');
-                        if (bar) bar.style.width = `${Math.round(prog)}%`;
-                        if (txt) txt.textContent = `${Math.round(prog)}%`;
-                    }, 500);
-
                     try {
-                        // [최종 핵심 해결] 
-                        // 브라우저 캐시 무시(?v=final) + 순정 Blob 변환을 사용하여 완벽하게 CORS 에러를 무력화합니다.
-                        const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-                        const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
-                        const cb = '?v=final';
+                        // [최종 해결 방식]
+                        // 불안정한 toBlobURL 변환을 모두 폐기하고 오리지널 경로를 그대로 사용합니다.
+                        // 파일이 갱신되도록 쿼리스트링(?v=timestamp)을 붙여 캐시 문제를 원천 차단합니다.
+                        const cb = '?v=' + new Date().getTime();
+                        const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+                        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
 
                         await ffmpeg.load({
-                            coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js${cb}`, 'text/javascript'),
-                            wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm${cb}`, 'application/wasm'),
-                            classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js${cb}`, 'text/javascript')
+                            coreURL: `${coreURL}/ffmpeg-core.js${cb}`,
+                            wasmURL: `${coreURL}/ffmpeg-core.wasm${cb}`,
+                            classWorkerURL: `${ffmpegURL}/814.ffmpeg.js${cb}`
                         });
-
-                        clearInterval(progInt);
-                        const bar = document.getElementById('simulated-progress-bar');
-                        const txt = document.getElementById('simulated-progress-text');
-                        if (bar) bar.style.width = `100%`;
-                        if (txt) txt.textContent = `100%`;
                         
                     } catch (loadErr) {
-                        clearInterval(progInt);
                         console.error("FFmpeg 로드 에러:", loadErr);
-                        throw new Error(loadErr.message);
+                        throw new Error("엔진 모듈을 로드하지 못했습니다. (애드블록, 방화벽 등을 확인해주세요)");
                     }
+                }
+
+                if (selectedFile.size > 500 * 1024 * 1024) {
+                    console.warn("파일 크기가 500MB를 초과하여 브라우저 메모리에 부담을 줄 수 있습니다.");
                 }
 
                 showMessage('info', '파일을 메모리에 준비하고 있습니다...');
